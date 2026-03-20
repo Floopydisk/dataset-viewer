@@ -16,3 +16,4 @@
 # tests coverage
 .coverage
 coverage.xml
+settings.json

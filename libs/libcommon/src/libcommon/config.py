@@ -51,6 +51,8 @@ class AssetsConfig:
 S3_ACCESS_KEY_ID = None
 S3_SECRET_ACCESS_KEY = None
 S3_REGION_NAME = "us-east-1"
+S3_ENDPOINT_URL = None
+S3_ADDRESSING_STYLE = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,8 @@ class S3Config:
     access_key_id: Optional[str] = S3_ACCESS_KEY_ID
     secret_access_key: Optional[str] = S3_SECRET_ACCESS_KEY
     region_name: str = S3_REGION_NAME
+    endpoint_url: Optional[str] = S3_ENDPOINT_URL
+    addressing_style: Optional[str] = S3_ADDRESSING_STYLE
 
     @classmethod
     def from_env(cls) -> "S3Config":
@@ -67,6 +71,8 @@ class S3Config:
                 access_key_id=env.str(name="ACCESS_KEY_ID", default=S3_ACCESS_KEY_ID),
                 secret_access_key=env.str(name="SECRET_ACCESS_KEY", default=S3_SECRET_ACCESS_KEY),
                 region_name=env.str(name="REGION_NAME", default=S3_REGION_NAME),
+                endpoint_url=env.str(name="ENDPOINT_URL", default=S3_ENDPOINT_URL),
+                addressing_style=env.str(name="ADDRESSING_STYLE", default=S3_ADDRESSING_STYLE),
             )
 
 

@@ -55,11 +55,20 @@ class StorageClient:
         if protocol == "s3":
             if not s3_config:
                 raise StorageClientInitializeError("s3 config is required")
+            client_kwargs = {"region_name": s3_config.region_name}
+            if s3_config.endpoint_url:
+                client_kwargs["endpoint_url"] = s3_config.endpoint_url
+
+            config_kwargs = None
+            if s3_config.addressing_style:
+                config_kwargs = {"s3": {"addressing_style": s3_config.addressing_style}}
+
             self._fs = fsspec.filesystem(
                 protocol,
                 key=s3_config.access_key_id,
                 secret=s3_config.secret_access_key,
-                client_kwargs={"region_name": s3_config.region_name},
+                client_kwargs=client_kwargs,
+                config_kwargs=config_kwargs,
                 max_paths=100,  # to avoid the DirCache from growing too much
             )
         elif protocol == "file":
