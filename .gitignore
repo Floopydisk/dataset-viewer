@@ -18,3 +18,4 @@
 coverage.xml
 settings.json
 *.pem
+.env.production

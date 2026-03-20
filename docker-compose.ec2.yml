@@ -1,5 +1,3 @@
-version: '3.8'
-
 # EC2 Production Docker Compose for Dataset Viewer Backend
 # All services running on single instance with persistent storage on /mnt/data
 
