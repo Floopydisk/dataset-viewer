@@ -1,0 +1,294 @@
+version: '3.8'
+
+# EC2 Production Docker Compose for Dataset Viewer Backend
+# All services running on single instance with persistent storage on /mnt/data
+
+x-common-env: &common-env
+  # Common settings
+  COMMON_BLOCKED_DATASETS: ${COMMON_BLOCKED_DATASETS}
+  COMMON_HF_ENDPOINT: ${COMMON_HF_ENDPOINT}
+  COMMON_HF_TOKEN: ${COMMON_HF_TOKEN}
+  # Logging
+  LOG_LEVEL: ${LOG_LEVEL}
+  # MongoDB (using Atlas)
+  CACHE_MONGO_URL: ${CACHE_MONGO_URL}
+  CACHE_MONGO_DATABASE: ${CACHE_MONGO_DATABASE}
+  QUEUE_MONGO_URL: ${QUEUE_MONGO_URL}
+  QUEUE_MONGO_DATABASE: ${QUEUE_MONGO_DATABASE}
+  # Storage - Supabase S3
+  ASSETS_BASE_URL: ${ASSETS_BASE_URL}
+  ASSETS_STORAGE_ROOT: ${ASSETS_STORAGE_ROOT}
+  ASSETS_STORAGE_PROTOCOL: ${ASSETS_STORAGE_PROTOCOL}
+  CACHED_ASSETS_BASE_URL: ${CACHED_ASSETS_BASE_URL}
+  CACHED_ASSETS_STORAGE_ROOT: ${CACHED_ASSETS_STORAGE_ROOT}
+  CACHED_ASSETS_STORAGE_PROTOCOL: ${CACHED_ASSETS_STORAGE_PROTOCOL}
+  # S3 credentials
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+  S3_REGION_NAME: ${S3_REGION_NAME}
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
+  S3_ADDRESSING_STYLE: ${S3_ADDRESSING_STYLE}
+  # HuggingFace settings
+  HF_ENDPOINT: ${COMMON_HF_ENDPOINT}
+  HF_DATASETS_CACHE: /data/datasets-cache
+  HF_MODULES_CACHE: /data/modules-cache
+
+x-service-env: &service-env
+  <<: *common-env
+  # API authentication (if using)
+  API_HF_AUTH_PATH: ${API_HF_AUTH_PATH}
+  API_HF_JWT_PUBLIC_KEY_URL: ${API_HF_JWT_PUBLIC_KEY_URL}
+  API_HF_JWT_ADDITIONAL_PUBLIC_KEYS: ${API_HF_JWT_ADDITIONAL_PUBLIC_KEYS}
+  API_HF_JWT_ALGORITHM: ${API_HF_JWT_ALGORITHM}
+  API_HF_TIMEOUT_SECONDS: ${API_HF_TIMEOUT_SECONDS}
+  API_MAX_AGE_LONG: ${API_MAX_AGE_LONG}
+  API_MAX_AGE_SHORT: ${API_MAX_AGE_SHORT}
+
+services:
+  reverse-proxy:
+    image: nginx:1.25.3
+    container_name: reverse-proxy
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./services/reverse-proxy/nginx-templates/:/etc/nginx/templates:ro
+      - /mnt/data/storage:/storage:ro
+    environment:
+      ASSETS_STORAGE_ROOT: /storage/assets
+      CACHED_ASSETS_STORAGE_ROOT: /storage/cached-assets
+      OPENAPI_FILE: docs/source/openapi.json
+      HOST: 0.0.0.0
+      PORT: 80
+      URL_ADMIN: http://admin:8081
+      URL_API: http://api:8080
+      URL_ROWS: http://rows:8082
+      URL_SEARCH: http://search:8083
+      URL_SSE_API: http://sse-api:8085
+      URL_WEBHOOK: http://webhook:8087
+    depends_on:
+      - api
+      - rows
+      - search
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  api:
+    build:
+      context: .
+      target: api
+    container_name: api
+    restart: always
+    environment:
+      <<: *service-env
+      API_UVICORN_HOSTNAME: 0.0.0.0
+      API_UVICORN_PORT: 8080
+      API_UVICORN_NUM_WORKERS: 2
+    volumes:
+      - /mnt/data/storage:/storage:rw
+    expose:
+      - "8080"
+    depends_on:
+      - mongodb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  rows:
+    build:
+      context: .
+      target: rows
+    container_name: rows
+    restart: always
+    environment:
+      <<: *service-env
+      API_UVICORN_HOSTNAME: 0.0.0.0
+      API_UVICORN_PORT: 8082
+      API_UVICORN_NUM_WORKERS: 2
+      PARQUET_METADATA_STORAGE_DIRECTORY: /data/parquet_metadata
+      ROWS_INDEX_MAX_ARROW_DATA_IN_MEMORY: 300000000
+    volumes:
+      - /mnt/data/storage:/storage:rw
+      - /mnt/data/parquet_metadata:/data/parquet_metadata:ro
+    expose:
+      - "8082"
+    depends_on:
+      - mongodb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  search:
+    build:
+      context: .
+      target: search
+    container_name: search
+    restart: always
+    environment:
+      <<: *service-env
+      API_UVICORN_HOSTNAME: 0.0.0.0
+      API_UVICORN_PORT: 8083
+      API_UVICORN_NUM_WORKERS: 2
+      PARQUET_METADATA_STORAGE_DIRECTORY: /data/parquet_metadata
+      DUCKDB_INDEX_CACHE_DIRECTORY: /data/duckdb_index
+      DUCKDB_INDEX_EXTENSIONS_DIRECTORY: /tmp/duckdb-extensions
+      HF_HUB_ENABLE_HF_TRANSFER: 1
+    volumes:
+      - /mnt/data/storage:/storage:rw
+      - /mnt/data/parquet_metadata:/data/parquet_metadata:ro
+      - /mnt/data/duckdb_index:/data/duckdb_index:rw
+    expose:
+      - "8083"
+    depends_on:
+      - mongodb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  worker:
+    build:
+      context: .
+      target: worker
+    container_name: worker
+    restart: always
+    environment:
+      <<: *common-env
+      WORKER_UVICORN_HOSTNAME: 0.0.0.0
+      WORKER_UVICORN_PORT: 8086
+      WORKER_UVICORN_NUM_WORKERS: 1
+      WORKER_SLEEP_SECONDS: 15
+      WORKER_MAX_JOB_DURATION_SECONDS: 1200
+      COMMITTER_HF_TOKEN: ${COMMITTER_HF_TOKEN}
+      PARQUET_METADATA_STORAGE_DIRECTORY: /data/parquet_metadata
+      DESCRIPTIVE_STATISTICS_CACHE_DIRECTORY: /data/stats_cache
+      DESCRIPTIVE_STATISTICS_MAX_SPLIT_SIZE_BYTES: 100000000
+      FIRST_ROWS_MAX_BYTES: 1000000
+      FIRST_ROWS_MIN_CELL_BYTES: 100
+      FIRST_ROWS_MIN_NUMBER: 10
+      FIRST_ROWS_COLUMNS_MAX_NUMBER: 1000
+      CONFIG_NAMES_MAX_NUMBER: 3000
+      ROWS_INDEX_MAX_ARROW_DATA_IN_MEMORY: 300000000
+      PARQUET_AND_INFO_MAX_DATASET_SIZE_BYTES: 100000000
+      WORKER_MAX_LOAD_PCT: 70
+      WORKER_MAX_MEMORY_PCT: 80
+      HF_HUB_ENABLE_HF_TRANSFER: 1
+      NUMBA_CACHE_DIR: /data/numba_cache
+    volumes:
+      - /mnt/data/storage:/storage:rw
+      - /mnt/data/parquet_metadata:/data/parquet_metadata:rw
+      - /mnt/data/stats_cache:/data/stats_cache:rw
+      - /mnt/data/datasets_cache:/data/datasets_cache
+      - /mnt/data/modules_cache:/data/modules_cache
+    expose:
+      - "8086"
+    depends_on:
+      - mongodb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  webhook:
+    build:
+      context: .
+      target: webhook
+    container_name: webhook
+    restart: always
+    environment:
+      <<: *service-env
+      API_UVICORN_HOSTNAME: 0.0.0.0
+      API_UVICORN_PORT: 8087
+      API_UVICORN_NUM_WORKERS: 2
+    volumes:
+      - /mnt/data/storage:/storage:rw
+    expose:
+      - "8087"
+    depends_on:
+      - mongodb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8087/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  admin:
+    build:
+      context: .
+      target: admin
+    container_name: admin
+    restart: always
+    environment:
+      <<: *service-env
+      ADMIN_HF_ORGANIZATION: datasets-maintainers
+      ADMIN_CACHE_REPORTS_NUM_RESULTS: 100
+      ADMIN_CACHE_REPORTS_WITH_CONTENT_NUM_RESULTS: 100
+      ADMIN_HF_TIMEOUT_SECONDS: 0.2
+      ADMIN_HF_WHOAMI_PATH: /api/whoami-v2
+      ADMIN_MAX_AGE: 10
+      ADMIN_UVICORN_HOSTNAME: 0.0.0.0
+      ADMIN_UVICORN_PORT: 8081
+      ADMIN_UVICORN_NUM_WORKERS: 2
+      PARQUET_METADATA_STORAGE_DIRECTORY: /data/parquet_metadata
+    volumes:
+      - /mnt/data/storage:/storage:rw
+      - /mnt/data/parquet_metadata:/data/parquet_metadata:ro
+    expose:
+      - "8081"
+    depends_on:
+      - mongodb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  sse-api:
+    build:
+      context: .
+      target: sse-api
+    container_name: sse-api
+    restart: always
+    environment:
+      <<: *service-env
+      API_UVICORN_HOSTNAME: 0.0.0.0
+      API_UVICORN_PORT: 8085
+      API_UVICORN_NUM_WORKERS: 2
+    expose:
+      - "8085"
+    depends_on:
+      - mongodb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mongodb:
+    image: mongo:6.0.9
+    container_name: mongodb
+    restart: always
+    command: mongod
+    ports:
+      - "27017:27017"
+    volumes:
+      - /mnt/data/mongodb:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongodb_data:
+    driver: local
