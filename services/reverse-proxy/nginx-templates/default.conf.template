@@ -54,7 +54,7 @@ server {
 
   location /admin/ {
     # no trailing slash: we keep the /admin/ prefix
-    proxy_pass $url_admin;
+    proxy_pass $url_admin$request_uri;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -63,7 +63,7 @@ server {
   }
 
   location /rows {
-    proxy_pass $url_rows/rows;
+    proxy_pass $url_rows$request_uri;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -72,7 +72,7 @@ server {
   }
 
   location /search {
-    proxy_pass $url_search/search;
+    proxy_pass $url_search$request_uri;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -81,7 +81,7 @@ server {
   }
 
   location /filter {
-    proxy_pass $url_search/filter;
+    proxy_pass $url_search$request_uri;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -91,7 +91,7 @@ server {
 
   location /sse/ {
     # no trailing slash: we keep the /sse/ prefix
-    proxy_pass $url_sse_api;
+    proxy_pass $url_sse_api$request_uri;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -100,7 +100,7 @@ server {
   }
 
   location /webhook {
-    proxy_pass $url_webhook/webhook;
+    proxy_pass $url_webhook$request_uri;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -109,7 +109,7 @@ server {
   }
 
   location / {
-    proxy_pass $url_api;
+    proxy_pass $url_api$request_uri;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
