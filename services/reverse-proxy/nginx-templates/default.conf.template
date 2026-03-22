@@ -24,8 +24,15 @@ server {
   listen ${PORT};
   listen [::]:${PORT};
   server_name ${HOST};
+  resolver 127.0.0.11 valid=30s ipv6=off;
   set $assets_storage_root ${ASSETS_STORAGE_ROOT};
   set $cached_assets_storage_root ${CACHED_ASSETS_STORAGE_ROOT};
+  set $url_admin ${URL_ADMIN};
+  set $url_api ${URL_API};
+  set $url_rows ${URL_ROWS};
+  set $url_search ${URL_SEARCH};
+  set $url_sse_api ${URL_SSE_API};
+  set $url_webhook ${URL_WEBHOOK};
 
   location /openapi.json {
     return 307 https://raw.githubusercontent.com/huggingface/dataset-viewer/main/${OPENAPI_FILE};
@@ -47,7 +54,7 @@ server {
 
   location /admin/ {
     # no trailing slash: we keep the /admin/ prefix
-    proxy_pass ${URL_ADMIN};
+    proxy_pass $url_admin;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -56,7 +63,7 @@ server {
   }
 
   location /rows {
-    proxy_pass ${URL_ROWS}/rows;
+    proxy_pass $url_rows/rows;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -65,7 +72,7 @@ server {
   }
 
   location /search {
-    proxy_pass ${URL_SEARCH}/search;
+    proxy_pass $url_search/search;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -74,7 +81,7 @@ server {
   }
 
   location /filter {
-    proxy_pass ${URL_SEARCH}/filter;
+    proxy_pass $url_search/filter;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -84,7 +91,7 @@ server {
 
   location /sse/ {
     # no trailing slash: we keep the /sse/ prefix
-    proxy_pass ${URL_SSE_API};
+    proxy_pass $url_sse_api;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -93,7 +100,7 @@ server {
   }
 
   location /webhook {
-    proxy_pass ${URL_WEBHOOK}/webhook;
+    proxy_pass $url_webhook/webhook;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -102,7 +109,7 @@ server {
   }
 
   location / {
-    proxy_pass ${URL_API};
+    proxy_pass $url_api;
     proxy_set_header Host $proxy_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

@@ -171,7 +171,7 @@ chmod +x ~/renew-certs.sh
 From EC2, test if you can reach HuggingFace:
 
 ```bash
-curl -v https://huggingface.co/api/keys/public | head -20
+curl -v https://huggingface.co/api/keys/jwt | head -20
 ```
 
 If this fails, your EC2 security group may be blocking outbound HTTPS. Fix it:
@@ -183,7 +183,7 @@ If this fails, your EC2 security group may be blocking outbound HTTPS. Fix it:
 The authentication settings are already in place:
 
 ```bash
-API_HF_JWT_PUBLIC_KEY_URL=https://huggingface.co/api/keys/public
+API_HF_JWT_PUBLIC_KEY_URL=https://huggingface.co/api/keys/jwt
 API_HF_JWT_ADDITIONAL_PUBLIC_KEYS=
 API_HF_JWT_ALGORITHM=EdDSA
 ```
@@ -205,7 +205,7 @@ Create a test script to verify JWT auth works:
 
 ```bash
 # Get a HF token (create one at https://huggingface.co/settings/tokens)
-export HF_TOKEN=hf_xxxxxxxxxxxx
+export HF_TOKEN=hf_xxxxxxx
 
 # Make authenticated request
 curl -H "Authorization: Bearer $HF_TOKEN" \
@@ -242,7 +242,7 @@ Check EC2 security group and connectivity:
 
 ```bash
 # Test from EC2
-curl -v https://huggingface.co/api/keys/public
+curl -v https://huggingface.co/api/keys/jwt
 
 # If fails: check outbound HTTPS in security group
 # AWS Console → Security Groups → Outbound Rules → Add HTTPS to 0.0.0.0/0
