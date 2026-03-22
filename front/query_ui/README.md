@@ -107,3 +107,12 @@ You can override this location with:
 - `Dataset Viewer Server`: `https://54.198.247.234`
 - `Auto-resolve renamed dataset IDs`: enabled
 - `Skip TLS verification`: enabled until certificate trust is fully configured
+
+## Troubleshooting
+
+- If the `query-ui` container restarts with `ImportError: cannot import name 'HfFolder'`, rebuild with no cache to apply the pinned dependency versions:
+
+```bash
+docker-compose -f docker-compose.ec2.yml --env-file .env.production build --no-cache query-ui
+docker-compose -f docker-compose.ec2.yml --env-file .env.production up -d --force-recreate query-ui reverse-proxy
+```
