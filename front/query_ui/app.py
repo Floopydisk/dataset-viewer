@@ -802,7 +802,7 @@ with gr.Blocks(title="Dataset Viewer Workbench") as demo:
         run_button = gr.Button("Run Endpoint Query", variant="primary")
         status_md = gr.Markdown()
         resolved_dataset = gr.Textbox(label="Resolved dataset", interactive=False)
-        curl_cmd = gr.Code(label="Equivalent curl", language="bash")
+        curl_cmd = gr.Code(label="Equivalent curl", language="shell")
         response_json = gr.Code(label="Response", language="json")
         table_status = gr.Markdown()
         result_table = gr.Dataframe(label="Tabular View", visible=False, interactive=False)
