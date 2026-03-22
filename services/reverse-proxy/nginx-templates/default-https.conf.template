@@ -92,7 +92,8 @@ server {
   }
 
   location /query-ui/ {
-    proxy_pass $url_query_ui$request_uri;
+    rewrite ^/query-ui/?(.*)$ /$1 break;
+    proxy_pass $url_query_ui;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
