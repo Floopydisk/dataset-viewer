@@ -62,12 +62,14 @@ services:
       PORT: 80
       URL_ADMIN: http://admin:8081
       URL_API: http://api:8080
+      URL_QUERY_UI: http://query-ui:7860
       URL_ROWS: http://rows:8082
       URL_SEARCH: http://search:8083
       URL_SSE_API: http://sse-api:8085
       URL_WEBHOOK: http://webhook:8087
     depends_on:
       - api
+      - query-ui
       - rows
       - search
     healthcheck:
@@ -76,6 +78,26 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  query-ui:
+    build:
+      context: ./front/query_ui
+      dockerfile: Dockerfile
+    container_name: query-ui
+    restart: always
+    environment:
+      DEFAULT_SERVER: https://54.198.247.234
+      DEFAULT_HF_ENDPOINT: https://huggingface.co
+      GRADIO_SERVER_NAME: 0.0.0.0
+      GRADIO_SERVER_PORT: 7860
+      GRADIO_ROOT_PATH: /query-ui
+    expose:
+      - "7860"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7860/query-ui/', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   api:
     build:
