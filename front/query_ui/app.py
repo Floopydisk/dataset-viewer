@@ -1,4 +1,5 @@
 import json
+import inspect
 import os
 import re
 import time
@@ -942,8 +943,15 @@ with gr.Blocks(title="Dataset Viewer Workbench") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(
-        server_name=os.environ.get("GRADIO_SERVER_NAME", "0.0.0.0"),
-        server_port=int(os.environ.get("GRADIO_SERVER_PORT", "7860")),
-        root_path=os.environ.get("GRADIO_ROOT_PATH"),
-    )
+    launch_kwargs = {
+        "server_name": os.environ.get("GRADIO_SERVER_NAME", "0.0.0.0"),
+        "server_port": int(os.environ.get("GRADIO_SERVER_PORT", "7860")),
+    }
+    configured_root_path = os.environ.get("GRADIO_ROOT_PATH")
+    if configured_root_path:
+        try:
+            if "root_path" in inspect.signature(demo.launch).parameters:
+                launch_kwargs["root_path"] = configured_root_path
+        except Exception:
+            pass
+    demo.launch(**launch_kwargs)
