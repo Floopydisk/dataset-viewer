@@ -32,7 +32,7 @@ cp .env .env.production
 
 # Start the backend with docker-compose
 # Note: Change log-driver to awslogs if you want CloudWatch logs
-docker-compose -f docker-compose.yml --env-file .env.production up -d
+docker-compose -f docker-compose.ec2.yml --env-file .env.production up -d
 
 # Print status
 echo "Backend services starting up..."
