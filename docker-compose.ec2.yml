@@ -49,9 +49,11 @@ services:
     restart: always
     ports:
       - "80:80"
+      - "443:443"
     volumes:
-      - ./services/reverse-proxy/nginx-templates/:/etc/nginx/templates:ro
+      - ./services/reverse-proxy/nginx-templates/default-https.conf.template:/etc/nginx/templates/default.conf.template:ro
       - /mnt/data/storage:/storage:ro
+      - /mnt/data/certs:/etc/nginx/certs:ro
     environment:
       ASSETS_STORAGE_ROOT: /storage/assets
       CACHED_ASSETS_STORAGE_ROOT: /storage/cached-assets
