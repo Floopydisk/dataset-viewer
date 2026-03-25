@@ -10,7 +10,9 @@ from libcommon.queue.utils import _clean_queue_database
 from libcommon.resources import CacheMongoResource, QueueMongoResource
 from libcommon.simple_cache import _clean_cache_database
 from pytest import MonkeyPatch, fixture
+from starlette.testclient import TestClient
 
+from api.app import create_app_with_config
 from api.config import AppConfig, EndpointConfig
 from api.routes.endpoint import EndpointsDefinition, StepByInputTypeAndEndpoint
 
@@ -20,8 +22,13 @@ from api.routes.endpoint import EndpointsDefinition, StepByInputTypeAndEndpoint
 def monkeypatch_session(tmp_path_factory: pytest.TempPathFactory) -> Iterator[MonkeyPatch]:
     monkeypatch_session = MonkeyPatch()
     assets_root = str(tmp_path_factory.mktemp("assets_root"))
+    local_datasets_root = str(tmp_path_factory.mktemp("local_datasets_root"))
     monkeypatch_session.setenv("CACHED_ASSETS_STORAGE_ROOT", assets_root)
     monkeypatch_session.setenv("ASSETS_STORAGE_ROOT", assets_root)
+    monkeypatch_session.setenv("LOCAL_DATASETS_STORAGE_PROTOCOL", "file")
+    monkeypatch_session.setenv("LOCAL_DATASETS_STORAGE_ROOT", local_datasets_root)
+    monkeypatch_session.setenv("LOCAL_DATASETS_REQUIRE_BEARER_TOKEN", "false")
+    monkeypatch_session.setenv("LOCAL_DATASETS_MAX_IN_MEMORY_PROCESSING_BYTES", "100000000")
     monkeypatch_session.setenv("CACHE_MONGO_DATABASE", "dataset_viewer_cache_test")
     monkeypatch_session.setenv("QUEUE_MONGO_DATABASE", "dataset_viewer_queue_test")
     hostname = "localhost"
@@ -54,6 +61,11 @@ def endpoint_config(monkeypatch_session: MonkeyPatch) -> EndpointConfig:
             "/parquet": {"config": "config-parquet"},
         }
     )
+
+
+@fixture(scope="module")
+def client(app_config: AppConfig, endpoint_config: EndpointConfig) -> TestClient:
+    return TestClient(create_app_with_config(app_config=app_config, endpoint_config=endpoint_config))
 
 
 @fixture(scope="session")

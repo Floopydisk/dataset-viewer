@@ -3,6 +3,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from environs import Env
 
 from libapi.config import ApiConfig
 from libcommon.config import (
@@ -14,7 +15,11 @@ from libcommon.config import (
     LogConfig,
     QueueConfig,
     S3Config,
+    STORAGE_PROTOCOL_VALUES,
+    StorageProtocol,
+    is_storage_protocol,
 )
+from marshmallow.validate import OneOf
 from libcommon.processing_graph import InputType
 
 
@@ -29,6 +34,7 @@ class AppConfig:
     log: LogConfig = field(default_factory=LogConfig)
     queue: QueueConfig = field(default_factory=QueueConfig)
     s3: S3Config = field(default_factory=S3Config)
+    local_datasets: "LocalDatasetsConfig" = field(default_factory=lambda: LocalDatasetsConfig())
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -43,7 +49,55 @@ class AppConfig:
             queue=QueueConfig.from_env(),
             api=ApiConfig.from_env(hf_endpoint=common_config.hf_endpoint),
             s3=S3Config.from_env(),
+            local_datasets=LocalDatasetsConfig.from_env(),
         )
+
+
+LOCAL_DATASETS_STORAGE_PROTOCOL: StorageProtocol = "file"
+LOCAL_DATASETS_STORAGE_ROOT = "/storage/local-datasets"
+LOCAL_DATASETS_MAX_UPLOAD_SIZE_BYTES = 200_000_000
+LOCAL_DATASETS_REQUIRE_BEARER_TOKEN = True
+LOCAL_DATASETS_MAX_IN_MEMORY_PROCESSING_BYTES = 100_000_000
+
+
+@dataclass(frozen=True)
+class LocalDatasetsConfig:
+    storage_protocol: StorageProtocol = LOCAL_DATASETS_STORAGE_PROTOCOL
+    storage_root: str = LOCAL_DATASETS_STORAGE_ROOT
+    max_upload_size_bytes: int = LOCAL_DATASETS_MAX_UPLOAD_SIZE_BYTES
+    require_bearer_token: bool = LOCAL_DATASETS_REQUIRE_BEARER_TOKEN
+    max_in_memory_processing_bytes: int = LOCAL_DATASETS_MAX_IN_MEMORY_PROCESSING_BYTES
+
+    @classmethod
+    def from_env(cls) -> "LocalDatasetsConfig":
+        env = Env(expand_vars=True)
+        with env.prefixed("LOCAL_DATASETS_"):
+            storage_protocol_str = env.str(
+                name="STORAGE_PROTOCOL",
+                default=LOCAL_DATASETS_STORAGE_PROTOCOL,
+                validate=OneOf(
+                    STORAGE_PROTOCOL_VALUES,
+                    error="LOCAL_DATASETS_STORAGE_PROTOCOL must be one of: {choices}",
+                ),
+            )
+            if is_storage_protocol(storage_protocol_str):
+                storage_protocol = storage_protocol_str
+            else:
+                raise ValueError(f"Invalid storage protocol: {storage_protocol_str}")
+            return cls(
+                storage_protocol=storage_protocol,
+                storage_root=env.str(name="STORAGE_ROOT", default=LOCAL_DATASETS_STORAGE_ROOT),
+                max_upload_size_bytes=env.int(
+                    name="MAX_UPLOAD_SIZE_BYTES", default=LOCAL_DATASETS_MAX_UPLOAD_SIZE_BYTES
+                ),
+                require_bearer_token=env.bool(
+                    name="REQUIRE_BEARER_TOKEN", default=LOCAL_DATASETS_REQUIRE_BEARER_TOKEN
+                ),
+                max_in_memory_processing_bytes=env.int(
+                    name="MAX_IN_MEMORY_PROCESSING_BYTES",
+                    default=LOCAL_DATASETS_MAX_IN_MEMORY_PROCESSING_BYTES,
+                ),
+            )
 
 
 ProcessingStepNameByInputType = Mapping[InputType, str]

@@ -22,6 +22,15 @@ from starlette_prometheus import PrometheusMiddleware
 
 from api.config import AppConfig, EndpointConfig
 from api.routes.endpoint import EndpointsDefinition, create_endpoint
+from api.routes.local_datasets import (
+    create_delete_local_dataset_endpoint,
+    create_local_dataset_filter_endpoint,
+    create_list_local_datasets_endpoint,
+    create_local_dataset_info_endpoint,
+    create_local_dataset_rows_endpoint,
+    create_local_dataset_search_endpoint,
+    create_upload_local_dataset_endpoint,
+)
 
 
 def create_app() -> Starlette:
@@ -105,6 +114,36 @@ def create_app_with_config(app_config: AppConfig, endpoint_config: EndpointConfi
         )
         for endpoint_name, step_by_input_type in endpoints_definition.step_by_input_type_and_endpoint.items()
     ] + [
+        Route(
+            "/local-datasets",
+            endpoint=create_list_local_datasets_endpoint(app_config.local_datasets, app_config.s3),
+        ),
+        Route(
+            "/local-datasets/upload",
+            endpoint=create_upload_local_dataset_endpoint(app_config.local_datasets, app_config.s3),
+            methods=["POST"],
+        ),
+        Route(
+            "/local-datasets/{dataset_id}/info",
+            endpoint=create_local_dataset_info_endpoint(app_config.local_datasets, app_config.s3),
+        ),
+        Route(
+            "/local-datasets/{dataset_id}/rows",
+            endpoint=create_local_dataset_rows_endpoint(app_config.local_datasets, app_config.s3),
+        ),
+        Route(
+            "/local-datasets/{dataset_id}/search",
+            endpoint=create_local_dataset_search_endpoint(app_config.local_datasets, app_config.s3),
+        ),
+        Route(
+            "/local-datasets/{dataset_id}/filter",
+            endpoint=create_local_dataset_filter_endpoint(app_config.local_datasets, app_config.s3),
+        ),
+        Route(
+            "/local-datasets/{dataset_id}",
+            endpoint=create_delete_local_dataset_endpoint(app_config.local_datasets, app_config.s3),
+            methods=["DELETE"],
+        ),
         Route("/healthcheck", endpoint=healthcheck_endpoint),
         Route("/metrics", endpoint=create_metrics_endpoint()),
         # ^ called by Prometheus
