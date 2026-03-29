@@ -22,3 +22,6 @@ settings.json
 .github
 .vscode
 .idea
+.blackboxcli/
+server.sh
+.env.debug

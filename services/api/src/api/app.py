@@ -93,27 +93,7 @@ def create_app_with_config(app_config: AppConfig, endpoint_config: EndpointConfi
     if not queue_resource.is_available():
         raise RuntimeError("The connection to the queue database could not be established. Exiting.")
 
-    routes = [
-        Route(
-            endpoint_name,
-            endpoint=create_endpoint(
-                endpoint_name=endpoint_name,
-                step_by_input_type=step_by_input_type,
-                hf_endpoint=app_config.common.hf_endpoint,
-                hf_token=app_config.common.hf_token,
-                blocked_datasets=app_config.common.blocked_datasets,
-                assets_storage_client=assets_storage_client,
-                hf_jwt_public_keys=hf_jwt_public_keys,
-                hf_jwt_algorithm=app_config.api.hf_jwt_algorithm,
-                external_auth_url=app_config.api.external_auth_url,
-                hf_timeout_seconds=app_config.api.hf_timeout_seconds,
-                max_age_long=app_config.api.max_age_long,
-                max_age_short=app_config.api.max_age_short,
-                storage_clients=storage_clients,
-            ),
-        )
-        for endpoint_name, step_by_input_type in endpoints_definition.step_by_input_type_and_endpoint.items()
-    ] + [
+    local_datasets_routes = [
         Route(
             "/local-datasets",
             endpoint=create_list_local_datasets_endpoint(app_config.local_datasets, app_config.s3),
@@ -144,6 +124,60 @@ def create_app_with_config(app_config: AppConfig, endpoint_config: EndpointConfi
             endpoint=create_delete_local_dataset_endpoint(app_config.local_datasets, app_config.s3),
             methods=["DELETE"],
         ),
+        # Compatibility aliases for deployments that route API paths with a /api prefix.
+        Route(
+            "/api/local-datasets",
+            endpoint=create_list_local_datasets_endpoint(app_config.local_datasets, app_config.s3),
+        ),
+        Route(
+            "/api/local-datasets/upload",
+            endpoint=create_upload_local_dataset_endpoint(app_config.local_datasets, app_config.s3),
+            methods=["POST"],
+        ),
+        Route(
+            "/api/local-datasets/{dataset_id}/info",
+            endpoint=create_local_dataset_info_endpoint(app_config.local_datasets, app_config.s3),
+        ),
+        Route(
+            "/api/local-datasets/{dataset_id}/rows",
+            endpoint=create_local_dataset_rows_endpoint(app_config.local_datasets, app_config.s3),
+        ),
+        Route(
+            "/api/local-datasets/{dataset_id}/search",
+            endpoint=create_local_dataset_search_endpoint(app_config.local_datasets, app_config.s3),
+        ),
+        Route(
+            "/api/local-datasets/{dataset_id}/filter",
+            endpoint=create_local_dataset_filter_endpoint(app_config.local_datasets, app_config.s3),
+        ),
+        Route(
+            "/api/local-datasets/{dataset_id}",
+            endpoint=create_delete_local_dataset_endpoint(app_config.local_datasets, app_config.s3),
+            methods=["DELETE"],
+        ),
+    ]
+
+    routes = [
+        Route(
+            endpoint_name,
+            endpoint=create_endpoint(
+                endpoint_name=endpoint_name,
+                step_by_input_type=step_by_input_type,
+                hf_endpoint=app_config.common.hf_endpoint,
+                hf_token=app_config.common.hf_token,
+                blocked_datasets=app_config.common.blocked_datasets,
+                assets_storage_client=assets_storage_client,
+                hf_jwt_public_keys=hf_jwt_public_keys,
+                hf_jwt_algorithm=app_config.api.hf_jwt_algorithm,
+                external_auth_url=app_config.api.external_auth_url,
+                hf_timeout_seconds=app_config.api.hf_timeout_seconds,
+                max_age_long=app_config.api.max_age_long,
+                max_age_short=app_config.api.max_age_short,
+                storage_clients=storage_clients,
+            ),
+        )
+        for endpoint_name, step_by_input_type in endpoints_definition.step_by_input_type_and_endpoint.items()
+    ] + local_datasets_routes + [
         Route("/healthcheck", endpoint=healthcheck_endpoint),
         Route("/metrics", endpoint=create_metrics_endpoint()),
         # ^ called by Prometheus
