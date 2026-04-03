@@ -36,6 +36,7 @@ from worker.job_runners.dataset.parquet import DatasetParquetJobRunner
 from worker.job_runners.dataset.presidio_entities_count import DatasetPresidioEntitiesCountJobRunner
 from worker.job_runners.dataset.size import DatasetSizeJobRunner
 from worker.job_runners.dataset.split_names import DatasetSplitNamesJobRunner
+from worker.job_runners.dataset.train import DatasetTrainJobRunner
 from worker.job_runners.split.descriptive_statistics import (
     SplitDescriptiveStatisticsJobRunner,
 )
@@ -229,6 +230,11 @@ class JobRunnerFactory(BaseJobRunnerFactory):
             )
         if job_type == DatasetCroissantCrumbsJobRunner.get_job_type():
             return DatasetCroissantCrumbsJobRunner(
+                job_info=job_info,
+                app_config=self.app_config,
+            )
+        if job_type == DatasetTrainJobRunner.get_job_type():
+            return DatasetTrainJobRunner(
                 job_info=job_info,
                 app_config=self.app_config,
             )

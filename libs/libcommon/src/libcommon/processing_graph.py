@@ -699,6 +699,11 @@ specification: ProcessingGraphSpecification = {
         "job_runner_version": 1,
         "difficulty": 50,
     },
+    "dataset-train": {
+        "input_type": "dataset",
+        "job_runner_version": 1,
+        "difficulty": 50,
+    },
 }
 
 # global variable

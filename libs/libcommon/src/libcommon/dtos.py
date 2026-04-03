@@ -40,6 +40,7 @@ class JobParams(TypedDict):
     revision: str
     config: Optional[str]
     split: Optional[str]
+    params_dict: Optional[Mapping[str, Any]]
 
 
 class JobInfo(TypedDict):

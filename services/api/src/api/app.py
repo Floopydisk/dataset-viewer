@@ -31,6 +31,7 @@ from api.routes.local_datasets import (
     create_local_dataset_search_endpoint,
     create_upload_local_dataset_endpoint,
 )
+from api.routes.train import create_train_endpoint
 
 
 def create_app() -> Starlette:
@@ -94,6 +95,32 @@ def create_app_with_config(app_config: AppConfig, endpoint_config: EndpointConfi
         raise RuntimeError("The connection to the queue database could not be established. Exiting.")
 
     local_datasets_routes = [
+        Route(
+            "/train",
+            endpoint=create_train_endpoint(
+                hf_endpoint=app_config.common.hf_endpoint,
+                hf_token=app_config.common.hf_token,
+                hf_jwt_public_keys=hf_jwt_public_keys,
+                hf_jwt_algorithm=app_config.api.hf_jwt_algorithm,
+                external_auth_url=app_config.api.external_auth_url,
+                hf_timeout_seconds=app_config.api.hf_timeout_seconds,
+                storage_clients=storage_clients,
+            ),
+            methods=["POST", "GET"],
+        ),
+        Route(
+            "/api/train",
+            endpoint=create_train_endpoint(
+                hf_endpoint=app_config.common.hf_endpoint,
+                hf_token=app_config.common.hf_token,
+                hf_jwt_public_keys=hf_jwt_public_keys,
+                hf_jwt_algorithm=app_config.api.hf_jwt_algorithm,
+                external_auth_url=app_config.api.external_auth_url,
+                hf_timeout_seconds=app_config.api.hf_timeout_seconds,
+                storage_clients=storage_clients,
+            ),
+            methods=["POST", "GET"],
+        ),
         Route(
             "/local-datasets",
             endpoint=create_list_local_datasets_endpoint(app_config.local_datasets, app_config.s3),

@@ -2,6 +2,8 @@
 # Copyright 2022 The HuggingFace Authors.
 
 import contextlib
+import hashlib
+import json
 import logging
 import types
 from collections import Counter
@@ -18,7 +20,7 @@ import pyarrow as pa
 import pytz
 from mongoengine import Document
 from mongoengine.errors import DoesNotExist
-from mongoengine.fields import DateTimeField, EnumField, IntField, StringField
+from mongoengine.fields import DateTimeField, DictField, EnumField, IntField, StringField
 from mongoengine.queryset.queryset import QuerySet
 from pymongoarrow.api import Schema, find_pandas_all
 
@@ -116,6 +118,11 @@ class JobQueryFilters(TypedDict, total=False):
     dataset__nin: list[str]
 
 
+def _get_params_fingerprint(params_dict: Mapping[str, Any]) -> str:
+    payload = json.dumps(params_dict, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 PA_SCHEMA = Schema(
     {
         "_id": bson.ObjectId,
@@ -181,6 +188,7 @@ class JobDocument(Document):
     revision = StringField(required=True)
     config = StringField()
     split = StringField()
+    params_dict = DictField()
     unicity_id = StringField(required=True)
     namespace = StringField(required=True)
     priority = EnumField(Priority, default=Priority.LOW)
@@ -228,6 +236,7 @@ class JobDocument(Document):
                     "revision": self.revision,
                     "config": self.config,
                     "split": self.split,
+                    "params_dict": self.params_dict,
                 },
                 "priority": self.priority,
                 "difficulty": self.difficulty,
@@ -285,6 +294,7 @@ class Queue:
         config: Optional[str] = None,
         split: Optional[str] = None,
         priority: Priority = Priority.LOW,
+        params_dict: Optional[Mapping[str, Any]] = None,
     ) -> JobDocument:
         """Add a job to the queue in the waiting state.
 
@@ -299,10 +309,16 @@ class Queue:
             config (`str`, *optional*): The config on which to apply the job.
             split (`str`, *optional*): The config on which to apply the job.
             priority (`Priority`, *optional*): The priority of the job. Defaults to Priority.LOW.
+            params_dict (`Mapping[str, Any]`, *optional*): Arbitrary parameters for the job.
 
         Returns:
             `JobDocument`: the new job added to the queue
         """
+        normalized_params_dict = dict(params_dict or {})
+        unicity_id = inputs_to_string(revision=revision, dataset=dataset, config=config, split=split, prefix=job_type)
+        if normalized_params_dict:
+            unicity_id = f"{unicity_id},{_get_params_fingerprint(normalized_params_dict)}"
+
         increase_metric(dataset=dataset, job_type=job_type, status=Status.WAITING, difficulty=difficulty)
         return JobDocument(
             type=job_type,
@@ -310,9 +326,8 @@ class Queue:
             revision=revision,
             config=config,
             split=split,
-            unicity_id=inputs_to_string(
-                revision=revision, dataset=dataset, config=config, split=split, prefix=job_type
-            ),
+            params_dict=normalized_params_dict,
+            unicity_id=unicity_id,
             namespace=dataset.split("/")[0],
             priority=priority,
             created_at=get_datetime(),
@@ -332,6 +347,19 @@ class Queue:
             `int`: The number of created jobs. 0 if we had an exception.
         """
         try:
+            def _build_unicity_id(job_info: JobInfo) -> str:
+                params_dict = job_info["params"].get("params_dict") or {}
+                base_unicity_id = inputs_to_string(
+                    revision=job_info["params"]["revision"],
+                    dataset=job_info["params"]["dataset"],
+                    config=job_info["params"]["config"],
+                    split=job_info["params"]["split"],
+                    prefix=job_info["type"],
+                )
+                if params_dict:
+                    return f"{base_unicity_id},{_get_params_fingerprint(params_dict)}"
+                return base_unicity_id
+
             jobs = [
                 JobDocument(
                     type=job_info["type"],
@@ -339,13 +367,8 @@ class Queue:
                     revision=job_info["params"]["revision"],
                     config=job_info["params"]["config"],
                     split=job_info["params"]["split"],
-                    unicity_id=inputs_to_string(
-                        revision=job_info["params"]["revision"],
-                        dataset=job_info["params"]["dataset"],
-                        config=job_info["params"]["config"],
-                        split=job_info["params"]["split"],
-                        prefix=job_info["type"],
-                    ),
+                    params_dict=job_info["params"].get("params_dict") or {},
+                    unicity_id=_build_unicity_id(job_info),
                     namespace=job_info["params"]["dataset"].split("/")[0],
                     priority=job_info["priority"],
                     created_at=get_datetime(),

@@ -113,6 +113,44 @@ def test_add_job() -> None:
     assert_metric_jobs_per_type(job_type=test_type, status=Status.STARTED, total=0)
     assert_metric_jobs_per_worker(worker_size=WorkerSize.medium, jobs_count=1)
 
+
+def test_add_job_with_distinct_params_creates_distinct_unicity_ids() -> None:
+    queue = Queue()
+
+    first_job = queue.add_job(
+        job_type="dataset-train",
+        dataset="org/dataset",
+        revision="main",
+        difficulty=50,
+        params_dict={
+            "model_name": "tiny-bert",
+            "epochs": 3,
+            "batch_size": 16,
+            "learning_rate": 1e-3,
+            "seed": 0,
+        },
+    )
+    second_job = queue.add_job(
+        job_type="dataset-train",
+        dataset="org/dataset",
+        revision="main",
+        difficulty=50,
+        params_dict={
+            "model_name": "tiny-bert",
+            "epochs": 4,
+            "batch_size": 16,
+            "learning_rate": 1e-3,
+            "seed": 0,
+        },
+    )
+
+    assert first_job.unicity_id != second_job.unicity_id
+
+    started_job = queue.start_job()
+    assert started_job["job_id"] in {str(first_job.pk), str(second_job.pk)}
+    assert JobDocument.objects(pk=first_job.pk).count() == 1
+    assert JobDocument.objects(pk=second_job.pk).count() == 1
+
     # process the third job
     job_info = queue.start_job()
     other_job_id = ("1" if job_info["job_id"][0] == "0" else "0") + job_info["job_id"][1:]
