@@ -26,3 +26,4 @@ settings.json
 .blackboxcli/
 server.sh
 .env.debug
+.amazonq/
