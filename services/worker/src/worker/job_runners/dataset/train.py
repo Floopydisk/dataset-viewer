@@ -10,6 +10,7 @@ from libcommon.train import normalize_training_params
 from worker.config import AppConfig
 from worker.dtos import CompleteJobResult, JobResult
 from worker.job_runners.dataset.dataset_job_runner import DatasetJobRunner
+from worker.training.algorithms import TrainingExecutionContext, run_training_algorithm
 
 
 class DatasetTrainJobRunner(DatasetJobRunner):
@@ -59,30 +60,65 @@ class DatasetTrainJobRunner(DatasetJobRunner):
         batch_size = training_params["batch_size"]
         learning_rate = training_params["learning_rate"]
         seed = training_params["seed"]
+        task_type = training_params["task_type"]
+        training_algorithm = training_params["training_algorithm"]
+        train_split = training_params["train_split"]
+        eval_split = training_params["eval_split"]
+        max_samples = training_params["max_samples"]
+        experiment_name = training_params["experiment_name"]
 
         logging.info(
             f"Training parameters job_id={self.job_info['job_id']} model_name={model_name} epochs={epochs} "
-            f"batch_size={batch_size} learning_rate={learning_rate}"
+            f"batch_size={batch_size} learning_rate={learning_rate} task_type={task_type} "
+            f"algorithm={training_algorithm}"
         )
 
-        metrics = self._run_training(
-            model_name=model_name,
-            epochs=epochs,
-            batch_size=batch_size,
-            learning_rate=learning_rate,
-            seed=seed,
-        )
+        context: TrainingExecutionContext = {
+            "dataset": self.dataset,
+            "revision": self.dataset_git_revision,
+            "model_name": model_name,
+            "task_type": task_type,
+            "train_split": train_split,
+            "eval_split": eval_split,
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "learning_rate": learning_rate,
+            "seed": seed,
+            "max_samples": max_samples,
+            "experiment_name": experiment_name,
+        }
+
+        if training_algorithm:
+            algorithm_result = run_training_algorithm(name=training_algorithm, context=context)
+            metrics = dict(algorithm_result["metrics"])
+            artifacts = dict(algorithm_result["artifacts"])
+        else:
+            metrics = self._run_training(
+                model_name=model_name,
+                epochs=epochs,
+                batch_size=batch_size,
+                learning_rate=learning_rate,
+                seed=seed,
+            )
+            artifacts = {}
 
         return CompleteJobResult(
             content={
                 "status": "success",
                 "message": f"Training job completed for {self.dataset}",
                 "model_name": model_name,
+                "task_type": task_type,
+                "training_algorithm": training_algorithm,
+                "train_split": train_split,
+                "eval_split": eval_split,
+                "max_samples": max_samples,
+                "experiment_name": experiment_name,
                 "epochs": epochs,
                 "batch_size": batch_size,
                 "learning_rate": learning_rate,
                 "seed": seed,
                 "trained_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "metrics": metrics,
+                "artifacts": artifacts,
             }
         )

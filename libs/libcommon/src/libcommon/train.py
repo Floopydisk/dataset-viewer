@@ -11,6 +11,12 @@ class TrainingParameters(TypedDict):
     batch_size: int
     learning_rate: float
     seed: Optional[int]
+    task_type: str
+    training_algorithm: Optional[str]
+    train_split: str
+    eval_split: Optional[str]
+    max_samples: Optional[int]
+    experiment_name: Optional[str]
 
 
 class TrainingRequest(TypedDict):
@@ -38,6 +44,18 @@ _TRAIN_PARAM_ALIASES = {
     "learningRate": "learning_rate",
     "learning_rate": "learning_rate",
     "seed": "seed",
+    "taskType": "task_type",
+    "task_type": "task_type",
+    "trainingAlgorithm": "training_algorithm",
+    "training_algorithm": "training_algorithm",
+    "trainSplit": "train_split",
+    "train_split": "train_split",
+    "evalSplit": "eval_split",
+    "eval_split": "eval_split",
+    "maxSamples": "max_samples",
+    "max_samples": "max_samples",
+    "experimentName": "experiment_name",
+    "experiment_name": "experiment_name",
 }
 
 
@@ -118,12 +136,60 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
     else:
         seed = _to_bounded_int(seed_value, "seed", min_value=0, max_value=2_147_483_647)
 
+    task_type_value = normalized.get("task_type", "text-classification")
+    if not _is_non_empty_string(task_type_value):
+        raise TrainValidationError("'taskType' must be a non-empty string")
+
+    training_algorithm_value = normalized.get("training_algorithm")
+    training_algorithm: Optional[str]
+    if training_algorithm_value is None:
+        training_algorithm = None
+    else:
+        if not _is_non_empty_string(training_algorithm_value):
+            raise TrainValidationError("'trainingAlgorithm' must be a non-empty string")
+        training_algorithm = training_algorithm_value.strip()
+
+    train_split_value = normalized.get("train_split", "train")
+    if not _is_non_empty_string(train_split_value):
+        raise TrainValidationError("'trainSplit' must be a non-empty string")
+
+    eval_split_value = normalized.get("eval_split")
+    eval_split: Optional[str]
+    if eval_split_value is None:
+        eval_split = None
+    else:
+        if not _is_non_empty_string(eval_split_value):
+            raise TrainValidationError("'evalSplit' must be a non-empty string")
+        eval_split = eval_split_value.strip()
+
+    max_samples_value = normalized.get("max_samples")
+    max_samples: Optional[int]
+    if max_samples_value is None:
+        max_samples = None
+    else:
+        max_samples = _to_bounded_int(max_samples_value, "maxSamples", min_value=1, max_value=100_000_000)
+
+    experiment_name_value = normalized.get("experiment_name")
+    experiment_name: Optional[str]
+    if experiment_name_value is None:
+        experiment_name = None
+    else:
+        if not _is_non_empty_string(experiment_name_value):
+            raise TrainValidationError("'experimentName' must be a non-empty string")
+        experiment_name = experiment_name_value.strip()
+
     return {
         "model_name": model_name.strip(),
         "epochs": epochs,
         "batch_size": batch_size,
         "learning_rate": learning_rate,
         "seed": seed,
+        "task_type": task_type_value.strip(),
+        "training_algorithm": training_algorithm,
+        "train_split": train_split_value.strip(),
+        "eval_split": eval_split,
+        "max_samples": max_samples,
+        "experiment_name": experiment_name,
     }
 
 

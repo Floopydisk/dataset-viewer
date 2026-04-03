@@ -14,6 +14,12 @@ def test_normalize_training_params_accepts_aliases() -> None:
             "batchSize": 16,
             "learningRate": "0.0005",
             "seed": "42",
+            "taskType": "text-classification",
+            "trainingAlgorithm": "lora",
+            "trainSplit": "train",
+            "evalSplit": "test",
+            "maxSamples": "2000",
+            "experimentName": "baseline-a",
         }
     )
 
@@ -23,6 +29,12 @@ def test_normalize_training_params_accepts_aliases() -> None:
         "batch_size": 16,
         "learning_rate": 0.0005,
         "seed": 42,
+        "task_type": "text-classification",
+        "training_algorithm": "lora",
+        "train_split": "train",
+        "eval_split": "test",
+        "max_samples": 2000,
+        "experiment_name": "baseline-a",
     }
 
 
@@ -42,6 +54,12 @@ def test_parse_training_request_uses_defaults() -> None:
         "batch_size": 32,
         "learning_rate": 1e-3,
         "seed": None,
+        "task_type": "text-classification",
+        "training_algorithm": None,
+        "train_split": "train",
+        "eval_split": None,
+        "max_samples": None,
+        "experiment_name": None,
     }
 
 

@@ -34,6 +34,12 @@ def test_train_post_queues_job_with_normalized_params(client: TestClient) -> Non
         "batch_size": 8,
         "learning_rate": 0.0002,
         "seed": 123,
+        "task_type": "text-classification",
+        "training_algorithm": None,
+        "train_split": "train",
+        "eval_split": None,
+        "max_samples": None,
+        "experiment_name": None,
     }
 
     queue = Queue()
