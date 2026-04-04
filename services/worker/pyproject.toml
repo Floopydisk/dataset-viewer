@@ -25,6 +25,12 @@ zstandard = "^0.22.0"
 peft = "^0.11.0"
 transformers = "^4.41.0"
 accelerate = "^0.30.0"
+torch = [
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl", markers = "sys_platform == 'linux' and platform_machine != 'aarch64'" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl", markers = "sys_platform == 'darwin' and platform_machine != 'arm64'" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.8.0-cp312-none-macosx_11_0_arm64.whl", markers = "sys_platform == 'darwin' and platform_machine == 'arm64'" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.8.0%2Bcpu-cp312-cp312-manylinux_2_28_aarch64.whl", markers = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+]
 # to include fix for https://github.com/microsoft/presidio/pull/1377
 presidio-analyzer = { git = "https://github.com/microsoft/presidio.git", rev = "2348fff508f1a45af92945d5f597ec56bd4faae6", subdirectory = "presidio-analyzer" }
 
