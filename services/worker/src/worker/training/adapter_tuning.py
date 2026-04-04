@@ -10,25 +10,15 @@ from datasets import Dataset
 from peft import IA3Config, get_peft_model
 from transformers import AutoTokenizer, PreTrainedModel, Trainer, TrainingArguments
 
-from worker.training._base import get_device, log_epoch, resolve_output_dir, resolve_task, set_seed
-from worker.training._data import (
-    load_splits,
-    resolve_qa_columns,
-    resolve_seq2seq_columns,
-    resolve_text_column,
-    resolve_token_column,
-)
+from worker.training._base import get_device, resolve_output_dir, resolve_task, set_seed
+from worker.training._data import build_data_collator, ensure_padding_token, load_splits, tokenize_split
 from worker.training.algorithms import TrainingAlgorithmResult, TrainingExecutionContext
 
 
 def _load_adapter_model(model_name: str, task_type: str) -> tuple[Any, int]:
     model_class, peft_task_type = resolve_task(task_type)
     base: PreTrainedModel = model_class.from_pretrained(model_name)
-    config = IA3Config(
-        task_type=peft_task_type,
-        target_modules=["key", "value", "output.dense"],
-        feedforward_modules=["output.dense"],
-    )
+    config = IA3Config(task_type=peft_task_type)
     model = get_peft_model(base, config)
     model.to(get_device())
     trainable, total = model.get_nb_trainable_parameters()
@@ -36,50 +26,12 @@ def _load_adapter_model(model_name: str, task_type: str) -> tuple[Any, int]:
     return model, trainable
 
 
-def _tokenize_split(ds: Dataset, tokenizer: Any, task_type: str) -> Dataset:
-    if task_type == "token-classification":
-        col = resolve_token_column(ds)
-
-        def _tok(batch: dict[str, Any]) -> dict[str, Any]:
-            return tokenizer(  # type: ignore[operator]
-                batch[col], truncation=True, padding="max_length", max_length=128, is_split_into_words=True
-            )
-
-    elif task_type == "seq2seq":
-        input_col, target_col = resolve_seq2seq_columns(ds)
-
-        def _tok(batch: dict[str, Any]) -> dict[str, Any]:
-            enc = tokenizer(  # type: ignore[operator]
-                batch[input_col], truncation=True, padding="max_length", max_length=128
-            )
-            with tokenizer.as_target_tokenizer():
-                enc["labels"] = tokenizer(  # type: ignore[operator]
-                    batch[target_col], truncation=True, padding="max_length", max_length=128
-                )["input_ids"]
-            return enc
-
-    elif task_type == "question-answering":
-        ctx_col, q_col = resolve_qa_columns(ds)
-
-        def _tok(batch: dict[str, Any]) -> dict[str, Any]:
-            return tokenizer(  # type: ignore[operator]
-                batch[q_col], batch[ctx_col], truncation=True, padding="max_length", max_length=384
-            )
-
-    else:
-        col = resolve_text_column(ds)
-
-        def _tok(batch: dict[str, Any]) -> dict[str, Any]:
-            return tokenizer(batch[col], truncation=True, padding="max_length", max_length=128)  # type: ignore[operator]
-
-    return ds.map(_tok, batched=True)
-
-
 def _build_trainer(
     model: Any,
     train_ds: Dataset,
     eval_ds: Optional[Dataset],
     output_dir: str,
+    data_collator: Any,
     epochs: int,
     batch_size: int,
     learning_rate: float,
@@ -97,7 +49,7 @@ def _build_trainer(
         logging_steps=50,
         report_to="none",
     )
-    return Trainer(model=model, args=args, train_dataset=train_ds, eval_dataset=eval_ds)
+    return Trainer(model=model, args=args, train_dataset=train_ds, eval_dataset=eval_ds, data_collator=data_collator)
 
 
 def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
@@ -120,15 +72,18 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
 
     model, trainable = _load_adapter_model(model_name, task_type)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    ensure_padding_token(tokenizer)
+    data_collator = build_data_collator(tokenizer, task_type)
 
-    train_ds = _tokenize_split(splits[context["train_split"]], tokenizer, task_type)
-    eval_ds = _tokenize_split(splits[context["eval_split"]], tokenizer, task_type) if context["eval_split"] else None
+    train_ds = tokenize_split(splits[context["train_split"]], tokenizer, task_type)
+    eval_ds = tokenize_split(splits[context["eval_split"]], tokenizer, task_type) if context["eval_split"] else None
 
     trainer = _build_trainer(
         model=model,
         train_ds=train_ds,
         eval_ds=eval_ds,
         output_dir=output_dir,
+        data_collator=data_collator,
         epochs=context["epochs"],
         batch_size=context["batch_size"],
         learning_rate=context["learning_rate"],
@@ -142,8 +97,7 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
         eval_metrics = trainer.evaluate()
         metrics.update({k: float(v) for k, v in eval_metrics.items() if isinstance(v, (int, float))})
 
-    for epoch in range(1, context["epochs"] + 1):
-        log_epoch(epoch, context["epochs"], metrics["train_loss"])
+    logging.info(f"Training complete after {context['epochs']} epochs: train_loss={metrics['train_loss']:.4f}")
 
     return TrainingAlgorithmResult(
         metrics=metrics,

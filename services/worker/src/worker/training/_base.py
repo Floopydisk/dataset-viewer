@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024 The HuggingFace Authors.
 
-import logging
 import os
 import random
 from typing import Optional, Union
@@ -34,6 +33,7 @@ _TASK_MAP: dict[
     "text-classification": (AutoModelForSequenceClassification, TaskType.SEQ_CLS),
     "token-classification": (AutoModelForTokenClassification, TaskType.TOKEN_CLS),
     "seq2seq": (AutoModelForSeq2SeqLM, TaskType.SEQ_2_SEQ_LM),
+    "summarization": (AutoModelForSeq2SeqLM, TaskType.SEQ_2_SEQ_LM),
     "causal-lm": (AutoModelForCausalLM, TaskType.CAUSAL_LM),
     "question-answering": (AutoModelForQuestionAnswering, TaskType.QUESTION_ANS),
 }
@@ -56,8 +56,10 @@ def resolve_task(task_type: str) -> tuple[type[PreTrainedModel], TaskType]:
 
 def resolve_output_dir(algorithm: str, experiment_name: Optional[str]) -> str:
     """Return a deterministic output directory path for saving checkpoints."""
-    label = experiment_name.strip() if experiment_name else algorithm
-    path = os.path.join("/tmp", "training", label)
+    if experiment_name:
+        path = os.path.join("/tmp", "training", algorithm, experiment_name.strip())
+    else:
+        path = os.path.join("/tmp", "training", algorithm)
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -71,7 +73,3 @@ def set_seed(seed: Optional[int]) -> None:
 
 def get_device() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def log_epoch(epoch: int, total: int, loss: float) -> None:
-    logging.info(f"Epoch {epoch}/{total} loss={loss:.4f}")

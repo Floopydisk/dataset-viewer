@@ -4,15 +4,19 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from datasets import Dataset
+from datasets import Dataset, DatasetDict
 from peft import TaskType
 
 from worker.training._base import resolve_output_dir, resolve_task
 from worker.training._data import (
+    build_data_collator,
+    ensure_padding_token,
+    load_splits,
     resolve_qa_columns,
     resolve_seq2seq_columns,
     resolve_text_column,
     resolve_token_column,
+    tokenize_split,
 )
 from worker.training.algorithms import SUPPORTED_ALGORITHMS, TrainingAlgorithmResult, run_training_algorithm
 
@@ -80,13 +84,13 @@ def test_resolve_task_rejects_unknown_task() -> None:
 def test_resolve_output_dir_uses_experiment_name(tmp_path: object) -> None:
     with patch("worker.training._base.os.makedirs"):
         path = resolve_output_dir("lora", "my-experiment")
-    assert "my-experiment" in path
+    assert path == "/tmp/training/lora/my-experiment"
 
 
 def test_resolve_output_dir_falls_back_to_algorithm(tmp_path: object) -> None:
     with patch("worker.training._base.os.makedirs"):
         path = resolve_output_dir("lora", None)
-    assert "lora" in path
+    assert path == "/tmp/training/lora"
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +149,114 @@ def test_resolve_qa_columns_raises_when_missing() -> None:
     ds = _ds({"text": ["some passage"]})
     with pytest.raises(ValueError, match="Could not resolve QA columns"):
         resolve_qa_columns(ds)
+
+
+def test_tokenize_split_uses_text_target_for_seq2seq() -> None:
+    class _FakeTokenizer:
+        pad_token_id = 0
+
+        def __call__(self, *args: object, **kwargs: object) -> dict[str, list[list[int]]]:
+            if kwargs.get("text_target") is not None:
+                assert kwargs["text_target"] == ["target text"]
+                return {"input_ids": [[7, 8, 0]]}
+            assert args[0] == ["input text"]
+            return {"input_ids": [[1, 2, 0]]}
+
+    ds = _ds({"input": ["input text"], "target": ["target text"]})
+    tokenized = tokenize_split(ds, _FakeTokenizer(), "seq2seq")
+    assert tokenized[0]["labels"] == [7, 8, -100]
+
+
+def test_tokenize_split_builds_causal_lm_labels() -> None:
+    class _FakeTokenizer:
+        pad_token_id = 0
+
+        def __call__(self, texts: list[str], **kwargs: object) -> dict[str, list[list[int]]]:
+            assert texts == ["hello world"]
+            return {"input_ids": [[11, 12, 0]]}
+
+    ds = _ds({"text": ["hello world"]})
+    tokenized = tokenize_split(ds, _FakeTokenizer(), "causal-lm")
+    assert "labels" not in tokenized.column_names
+
+
+def test_tokenize_split_builds_qa_span_labels() -> None:
+    class _FakeQAEncoding(dict):
+        def sequence_ids(self, batch_index: int) -> list[int | None]:
+            assert batch_index == 0
+            return [None, 0, None, 1, 1, None]
+
+    class _FakeTokenizer:
+        def __call__(self, questions: list[str], contexts: list[str], **kwargs: object) -> _FakeQAEncoding:
+            assert questions == ["what?"]
+            assert contexts == ["hello world"]
+            assert kwargs.get("return_offsets_mapping") is True
+            return _FakeQAEncoding({"offset_mapping": [[(0, 0), (0, 5), (0, 0), (0, 5), (6, 11), (0, 0)]]})
+
+    ds = _ds({"question": ["what?"], "context": ["hello world"], "answers": [{"text": ["world"], "answer_start": [6]}]})
+    tokenized = tokenize_split(ds, _FakeTokenizer(), "question-answering")
+    assert tokenized[0]["start_positions"] == 4
+    assert tokenized[0]["end_positions"] == 4
+
+
+def test_tokenize_split_raises_for_unsupported_qa_answer_format() -> None:
+    class _FakeQAEncoding(dict):
+        def sequence_ids(self, batch_index: int) -> list[int | None]:
+            assert batch_index == 0
+            return [None, 0, None, 1, 1, None]
+
+    class _FakeTokenizer:
+        def __call__(self, questions: list[str], contexts: list[str], **kwargs: object) -> _FakeQAEncoding:
+            return _FakeQAEncoding({"offset_mapping": [[(0, 0), (0, 5), (0, 0), (0, 5), (6, 11), (0, 0)]]})
+
+    ds = _ds({"question": ["what?"], "context": ["hello world"], "answers": ["world"]})
+    with pytest.raises(ValueError, match="Unsupported QA answer format"):
+        tokenize_split(ds, _FakeTokenizer(), "question-answering")
+
+
+def test_tokenize_split_aligns_token_classification_labels() -> None:
+    class _FakeEncoding(dict):
+        def word_ids(self, batch_index: int) -> list[int | None]:
+            assert batch_index == 0
+            return [None, 0, 0, 1, None]
+
+    class _FakeTokenizer:
+        pad_token_id = 0
+
+        def __call__(self, texts: list[list[str]], **kwargs: object) -> _FakeEncoding:
+            assert texts == [["hello", "world"]]
+            return _FakeEncoding({"input_ids": [[101, 102, 103, 104, 0]]})
+
+    ds = _ds({"tokens": [["hello", "world"]], "ner_tags": [[3, 7]]})
+    tokenized = tokenize_split(ds, _FakeTokenizer(), "token-classification")
+    assert tokenized[0]["labels"] == [-100, 3, -100, 7, -100]
+
+
+def test_build_data_collator_only_enables_token_classification() -> None:
+    tokenizer = MagicMock()
+    assert build_data_collator(tokenizer, "token-classification") is not None
+    assert build_data_collator(tokenizer, "causal-lm") is not None
+    assert build_data_collator(tokenizer, "text-classification") is None
+
+
+def test_ensure_padding_token_uses_eos_when_missing() -> None:
+    tokenizer = MagicMock()
+    tokenizer.pad_token_id = None
+    tokenizer.eos_token = "</s>"
+
+    ensure_padding_token(tokenizer)
+
+    assert tokenizer.pad_token == "</s>"
+
+
+def test_load_splits_handles_single_dataset_return() -> None:
+    ds = _ds({"text": ["hello"], "label": [0]})
+
+    with patch("worker.training._data.load_dataset", return_value=DatasetDict({"train": ds})):
+        splits = load_splits("dummy", "main", "train", None, None)
+
+    assert list(splits) == ["train"]
+    assert splits["train"] is ds
 
 
 # ---------------------------------------------------------------------------

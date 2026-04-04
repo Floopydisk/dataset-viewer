@@ -27,3 +27,4 @@ settings.json
 server.sh
 .env.debug
 .amazonq/
+data-viewer-frontend/
