@@ -32,6 +32,25 @@ wait_for_service() {
     return 1
 }
 
+wait_for_container_service() {
+    local name=$1
+    local service=$2
+    local url=$3
+    local elapsed=0
+
+    echo "⏳ Waiting for $name (docker-compose exec $service $url)..."
+    while [ $elapsed -lt $TIMEOUT ]; do
+        if docker-compose exec -T "$service" curl -sf --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" "http://localhost$url" > /dev/null 2>&1; then
+            echo "✅ $name is healthy"
+            return 0
+        fi
+        sleep $INTERVAL
+        elapsed=$((elapsed + $INTERVAL))
+    done
+    echo "❌ $name did not respond within ${TIMEOUT}s"
+    return 1
+}
+
 json_get_string() {
     local key=$1
     local json=$2
@@ -47,12 +66,12 @@ json_get_string() {
 
 # Check all services
 echo "Checking services..."
-wait_for_service "API" 8080 "/healthcheck"
-wait_for_service "Rows" 8082 "/healthcheck"
-wait_for_service "Search" 8083 "/healthcheck"
-wait_for_service "Webhook" 8087 "/healthcheck"
-wait_for_service "Admin" 8081 "/healthcheck"
-wait_for_service "SSE API" 8085 "/healthcheck"
+wait_for_container_service "API" api "/healthcheck"
+wait_for_container_service "Rows" rows "/healthcheck"
+wait_for_container_service "Search" search "/healthcheck"
+wait_for_container_service "Webhook" webhook "/healthcheck"
+wait_for_container_service "Admin" admin "/healthcheck"
+wait_for_container_service "SSE API" sse-api "/healthcheck"
 
 echo
 echo "Testing reverse proxy..."
@@ -92,7 +111,7 @@ else
 fi
 
 echo "Testing direct API container train route..."
-if curl -sf --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" "http://localhost:8080/train/capabilities" | grep -q "task_types"; then
+if docker-compose exec -T api curl -sf --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" "http://localhost:8080/train/capabilities" | grep -q "task_types"; then
     echo "✅ API service exposes /train/capabilities directly"
 else
     echo "❌ API service on :8080 does not expose /train/capabilities"
