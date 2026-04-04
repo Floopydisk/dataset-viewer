@@ -302,8 +302,37 @@ def load_splits(
     train_split: str,
     eval_split: Optional[str],
     max_samples: Optional[int],
+    local_dataset_path: Optional[str] = None,
+    local_dataset_format: Optional[str] = None,
 ) -> DatasetDict:
     """Load train (and optionally eval) splits, applying max_samples if set."""
+    if local_dataset_path:
+        if eval_split and eval_split != train_split:
+            raise ValueError(
+                "Local dataset training currently supports only a single split. "
+                "Leave evalSplit empty or set it equal to trainSplit."
+            )
+
+        dataset_builder = "json" if local_dataset_format in {"json", "jsonl"} else local_dataset_format or "parquet"
+        logging.info(
+            "Loading local dataset file %r format=%r train_split=%r",
+            local_dataset_path,
+            local_dataset_format,
+            train_split,
+        )
+        raw = load_dataset(dataset_builder, data_files=local_dataset_path, split="train")  # type: ignore[call-overload]
+        if not isinstance(raw, Dataset):
+            raise ValueError("Expected a Dataset object when loading a local dataset file")
+
+        if max_samples is not None:
+            raw = raw.select(range(min(max_samples, len(raw))))
+
+        result: DatasetDict = DatasetDict()
+        result[train_split] = raw
+        if eval_split:
+            result[eval_split] = raw
+        return result
+
     splits_to_load = [train_split]
     if eval_split:
         splits_to_load.append(eval_split)

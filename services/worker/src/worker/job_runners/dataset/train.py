@@ -66,6 +66,8 @@ class DatasetTrainJobRunner(DatasetJobRunner):
         eval_split = training_params["eval_split"]
         max_samples = training_params["max_samples"]
         experiment_name = training_params["experiment_name"]
+        local_dataset_path = training_params["local_dataset_path"]
+        local_dataset_format = training_params["local_dataset_format"]
 
         logging.info(
             f"Training parameters job_id={self.job_info['job_id']} model_name={model_name} epochs={epochs} "
@@ -86,6 +88,8 @@ class DatasetTrainJobRunner(DatasetJobRunner):
             "seed": seed,
             "max_samples": max_samples,
             "experiment_name": experiment_name,
+            "local_dataset_path": local_dataset_path,
+            "local_dataset_format": local_dataset_format,
         }
 
         if training_algorithm:

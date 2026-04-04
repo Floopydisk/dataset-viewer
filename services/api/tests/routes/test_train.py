@@ -40,6 +40,9 @@ def test_train_post_queues_job_with_normalized_params(client: TestClient) -> Non
         "eval_split": None,
         "max_samples": None,
         "experiment_name": None,
+        "local_dataset_id": None,
+        "local_dataset_path": None,
+        "local_dataset_format": None,
     }
 
     queue = Queue()

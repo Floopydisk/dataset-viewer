@@ -2,6 +2,8 @@
 # Copyright 2024 The HuggingFace Authors.
 
 from collections.abc import Callable, Mapping
+import importlib
+import inspect
 from typing import Any, Optional, TypedDict
 
 
@@ -18,6 +20,8 @@ class TrainingExecutionContext(TypedDict):
     seed: Optional[int]
     max_samples: Optional[int]
     experiment_name: Optional[str]
+    local_dataset_path: Optional[str]
+    local_dataset_format: Optional[str]
 
 
 class TrainingAlgorithmResult(TypedDict):
@@ -52,6 +56,16 @@ def _build_registry() -> dict[str, TrainingAlgorithm]:
 
 
 def run_training_algorithm(name: str, context: TrainingExecutionContext) -> TrainingAlgorithmResult:
+    # Transformers Trainer expects accelerate.Accelerator.unwrap_model to support
+    # keep_torch_compile; older accelerate versions raise a runtime TypeError.
+    accelerator_module = importlib.import_module("accelerate")
+    accelerator_class = getattr(accelerator_module, "Accelerator")
+    unwrap_signature = inspect.signature(accelerator_class.unwrap_model)
+    if "keep_torch_compile" not in unwrap_signature.parameters:
+        raise RuntimeError(
+            "Incompatible accelerate runtime detected. Upgrade accelerate to >=0.31.0 to run training jobs."
+        )
+
     registry = _build_registry()
     algorithm = registry.get(name)
     if algorithm is None:

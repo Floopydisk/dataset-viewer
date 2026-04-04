@@ -9,12 +9,35 @@ from mongoengine.errors import DoesNotExist
 
 from libapi.authentication import auth_check
 from libapi.utils import Endpoint, get_json_error_response, get_json_ok_response, get_cache_entry_from_step
+from libcommon.config import S3Config
 from libcommon.prometheus import StepProfiler
 from libcommon.queue.jobs import Queue
 from libcommon.storage_client import StorageClient
 from libcommon.train import TrainValidationError, get_training_capabilities, parse_training_request
 from starlette.requests import Request
 from starlette.responses import Response
+
+from api.config import LocalDatasetsConfig
+from api.routes.local_datasets import _create_store, _get_access_error_response, _get_request_namespace, _read_metadata
+
+
+_LOCAL_DATASET_PREFIX = "local://"
+
+
+def _is_local_dataset_reference(dataset: str) -> bool:
+    return dataset.startswith(_LOCAL_DATASET_PREFIX)
+
+
+def _build_local_dataset_reference(namespace: str, dataset_id: str) -> str:
+    return f"{_LOCAL_DATASET_PREFIX}{namespace}/{dataset_id}"
+
+
+def _parse_local_dataset_reference(dataset: str) -> tuple[str, str]:
+    payload = dataset[len(_LOCAL_DATASET_PREFIX) :]
+    namespace, dataset_id = payload.split("/", maxsplit=1)
+    if not namespace or not dataset_id:
+        raise ValueError("Invalid local dataset reference")
+    return namespace, dataset_id
 
 
 def create_train_capabilities_endpoint() -> Endpoint:
@@ -37,6 +60,8 @@ def create_train_endpoint(
     external_auth_url: Optional[str] = None,
     hf_timeout_seconds: Optional[float] = None,
     storage_clients: Optional[list[StorageClient]] = None,
+    local_datasets_config: Optional[LocalDatasetsConfig] = None,
+    s3_config: Optional[S3Config] = None,
 ) -> Endpoint:
     async def train_endpoint(request: Request) -> Response:
         with StepProfiler("train", "endpoint"):
@@ -60,14 +85,43 @@ def create_train_endpoint(
                             content={"error": str(err)}, status_code=HTTPStatus.BAD_REQUEST
                         )
 
-                    await auth_check(
-                        dataset=train_request["dataset"],
-                        request=request,
-                        external_auth_url=external_auth_url,
-                        hf_jwt_public_keys=hf_jwt_public_keys,
-                        hf_jwt_algorithm=hf_jwt_algorithm,
-                        hf_timeout_seconds=hf_timeout_seconds,
-                    )
+                    local_dataset_id = train_request["params_dict"].get("local_dataset_id")
+                    if local_dataset_id:
+                        if local_datasets_config is None or s3_config is None:
+                            return get_json_error_response(
+                                content={"error": "Local datasets are not configured on this deployment."},
+                                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                            )
+
+                        access_error = _get_access_error_response(request=request, config=local_datasets_config)
+                        if access_error is not None:
+                            return access_error
+
+                        request_namespace = _get_request_namespace(request)
+                        store = _create_store(config=local_datasets_config, s3_config=s3_config)
+                        metadata = _read_metadata(
+                            store=store,
+                            namespace=request_namespace,
+                            dataset_id=local_dataset_id,
+                        )
+                        if metadata is None:
+                            return get_json_error_response(
+                                content={"error": "Local dataset not found."},
+                                status_code=HTTPStatus.NOT_FOUND,
+                            )
+
+                        train_request["dataset"] = _build_local_dataset_reference(request_namespace, local_dataset_id)
+                        train_request["params_dict"]["local_dataset_path"] = metadata.file_path
+                        train_request["params_dict"]["local_dataset_format"] = metadata.format
+                    else:
+                        await auth_check(
+                            dataset=train_request["dataset"],
+                            request=request,
+                            external_auth_url=external_auth_url,
+                            hf_jwt_public_keys=hf_jwt_public_keys,
+                            hf_jwt_algorithm=hf_jwt_algorithm,
+                            hf_timeout_seconds=hf_timeout_seconds,
+                        )
 
                     queue = Queue()
                     job = queue.add_job(
@@ -103,14 +157,32 @@ def create_train_endpoint(
                             content={"error": "'dataset' is required"}, status_code=HTTPStatus.BAD_REQUEST
                         )
 
-                    await auth_check(
-                        dataset=dataset,
-                        request=request,
-                        external_auth_url=external_auth_url,
-                        hf_jwt_public_keys=hf_jwt_public_keys,
-                        hf_jwt_algorithm=hf_jwt_algorithm,
-                        hf_timeout_seconds=hf_timeout_seconds,
-                    )
+                    if _is_local_dataset_reference(dataset):
+                        if local_datasets_config is None:
+                            return get_json_error_response(
+                                content={"error": "Local datasets are not configured on this deployment."},
+                                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                            )
+                        access_error = _get_access_error_response(request=request, config=local_datasets_config)
+                        if access_error is not None:
+                            return access_error
+
+                        expected_namespace, _ = _parse_local_dataset_reference(dataset)
+                        request_namespace = _get_request_namespace(request)
+                        if expected_namespace != request_namespace:
+                            return get_json_error_response(
+                                content={"error": "Not authorized to access this local training job."},
+                                status_code=HTTPStatus.FORBIDDEN,
+                            )
+                    else:
+                        await auth_check(
+                            dataset=dataset,
+                            request=request,
+                            external_auth_url=external_auth_url,
+                            hf_jwt_public_keys=hf_jwt_public_keys,
+                            hf_jwt_algorithm=hf_jwt_algorithm,
+                            hf_timeout_seconds=hf_timeout_seconds,
+                        )
 
                     queue = Queue()
                     if job_id:

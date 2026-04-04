@@ -17,6 +17,9 @@ class TrainingParameters(TypedDict):
     eval_split: Optional[str]
     max_samples: Optional[int]
     experiment_name: Optional[str]
+    local_dataset_id: Optional[str]
+    local_dataset_path: Optional[str]
+    local_dataset_format: Optional[str]
 
 
 class TrainingRequest(TypedDict):
@@ -79,7 +82,18 @@ _TRAIN_PARAM_ALIASES = {
     "max_samples": "max_samples",
     "experimentName": "experiment_name",
     "experiment_name": "experiment_name",
+    "localDatasetId": "local_dataset_id",
+    "local_dataset_id": "local_dataset_id",
+    "localDatasetPath": "local_dataset_path",
+    "local_dataset_path": "local_dataset_path",
+    "localDatasetFormat": "local_dataset_format",
+    "local_dataset_format": "local_dataset_format",
+    "datasetSource": "dataset_source",
+    "dataset_source": "dataset_source",
 }
+
+SUPPORTED_TRAINING_DATASET_SOURCES: frozenset[str] = frozenset({"huggingface", "local"})
+SUPPORTED_LOCAL_DATASET_FORMATS: frozenset[str] = frozenset({"csv", "json", "jsonl", "parquet"})
 
 
 def _is_non_empty_string(value: Any) -> bool:
@@ -217,6 +231,38 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
             raise TrainValidationError("'experimentName' must be a non-empty string")
         experiment_name = experiment_name_value.strip()
 
+    local_dataset_id_value = normalized.get("local_dataset_id")
+    local_dataset_id: Optional[str]
+    if local_dataset_id_value is None:
+        local_dataset_id = None
+    else:
+        if not _is_non_empty_string(local_dataset_id_value):
+            raise TrainValidationError("'localDatasetId' must be a non-empty string")
+        local_dataset_id = local_dataset_id_value.strip()
+
+    local_dataset_path_value = normalized.get("local_dataset_path")
+    local_dataset_path: Optional[str]
+    if local_dataset_path_value is None:
+        local_dataset_path = None
+    else:
+        if not _is_non_empty_string(local_dataset_path_value):
+            raise TrainValidationError("'localDatasetPath' must be a non-empty string")
+        local_dataset_path = local_dataset_path_value.strip()
+
+    local_dataset_format_value = normalized.get("local_dataset_format")
+    local_dataset_format: Optional[str]
+    if local_dataset_format_value is None:
+        local_dataset_format = None
+    else:
+        if not _is_non_empty_string(local_dataset_format_value):
+            raise TrainValidationError("'localDatasetFormat' must be a non-empty string")
+        local_dataset_format = local_dataset_format_value.strip().lower()
+        if local_dataset_format not in SUPPORTED_LOCAL_DATASET_FORMATS:
+            supported = ", ".join(sorted(SUPPORTED_LOCAL_DATASET_FORMATS))
+            raise TrainValidationError(
+                f"Unsupported localDatasetFormat '{local_dataset_format}'. Supported: {supported}"
+            )
+
     return {
         "model_name": model_name.strip(),
         "epochs": epochs,
@@ -229,6 +275,9 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
         "eval_split": eval_split,
         "max_samples": max_samples,
         "experiment_name": experiment_name,
+        "local_dataset_id": local_dataset_id,
+        "local_dataset_path": local_dataset_path,
+        "local_dataset_format": local_dataset_format,
     }
 
 
@@ -236,13 +285,19 @@ def parse_training_request(body: Mapping[str, Any], dataset_query: Optional[str]
     if not isinstance(body, Mapping):
         raise TrainValidationError("Request body must be a JSON object")
 
+    dataset_source_value = body.get("datasetSource", body.get("dataset_source", "huggingface"))
+    if not _is_non_empty_string(dataset_source_value):
+        raise TrainValidationError("'datasetSource' must be a non-empty string")
+    dataset_source = dataset_source_value.strip().lower()
+    if dataset_source not in SUPPORTED_TRAINING_DATASET_SOURCES:
+        supported_sources = ", ".join(sorted(SUPPORTED_TRAINING_DATASET_SOURCES))
+        raise TrainValidationError(f"Unsupported datasetSource '{dataset_source}'. Supported: {supported_sources}")
+
     body_dataset = body.get("dataset")
     if dataset_query and body_dataset and dataset_query != body_dataset:
         raise TrainValidationError("'dataset' in query and body must match")
 
     dataset = dataset_query or body_dataset
-    if not _is_non_empty_string(dataset):
-        raise TrainValidationError("'dataset' is required")
 
     revision_value = body.get("revision", "main")
     if not _is_non_empty_string(revision_value):
@@ -254,6 +309,19 @@ def parse_training_request(body: Mapping[str, Any], dataset_query: Optional[str]
         if key not in {"dataset", "revision"}
     }
     params_dict = normalize_training_params(training_payload, strict=True)
+
+    if dataset_source == "local":
+        local_dataset_id = params_dict.get("local_dataset_id")
+        if not local_dataset_id:
+            if _is_non_empty_string(dataset):
+                local_dataset_id = dataset.strip()
+            else:
+                raise TrainValidationError("'localDatasetId' is required when datasetSource is 'local'")
+            params_dict["local_dataset_id"] = local_dataset_id
+        dataset = f"local://pending/{local_dataset_id}"
+    else:
+        if not _is_non_empty_string(dataset):
+            raise TrainValidationError("'dataset' is required")
 
     return {
         "dataset": dataset.strip(),

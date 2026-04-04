@@ -42,6 +42,9 @@ def test_normalize_training_params_accepts_aliases() -> None:
         "eval_split": "test",
         "max_samples": 2000,
         "experiment_name": "baseline-a",
+        "local_dataset_id": None,
+        "local_dataset_path": None,
+        "local_dataset_format": None,
     }
 
 
@@ -67,6 +70,9 @@ def test_parse_training_request_uses_defaults() -> None:
         "eval_split": None,
         "max_samples": None,
         "experiment_name": None,
+        "local_dataset_id": None,
+        "local_dataset_path": None,
+        "local_dataset_format": None,
     }
 
 

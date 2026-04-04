@@ -82,6 +82,8 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
         train_split=context["train_split"],
         eval_split=context["eval_split"],
         max_samples=context["max_samples"],
+        local_dataset_path=context["local_dataset_path"],
+        local_dataset_format=context["local_dataset_format"],
     )
 
     model, trainable = _load_prompt_model(model_name, task_type)
