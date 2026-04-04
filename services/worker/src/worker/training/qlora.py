@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import torch
 from datasets import Dataset
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import AutoTokenizer, PreTrainedModel, Trainer, TrainingArguments
 
 from worker.training._base import resolve_output_dir, resolve_task, set_seed
@@ -20,11 +20,11 @@ _LORA_ALPHA = 16
 _LORA_DROPOUT = 0.05
 
 
-def _load_qlora_model(model_name: str, task_type: str) -> tuple[Any, int]:
-    """Load model with LoRA (CPU-only for development phase).
+def _load_qlora_model(model_name: str, task_type: str) -> tuple[Any, int, bool]:
+    """Load model with LoRA and keep a CPU-safe fallback.
 
     Returns:
-        (model, trainable_param_count)
+        (model, trainable_param_count, gpu_path_enabled)
     """
     model_class, peft_task_type = resolve_task(task_type)
     lora_config = LoraConfig(
@@ -34,14 +34,21 @@ def _load_qlora_model(model_name: str, task_type: str) -> tuple[Any, int]:
         lora_dropout=_LORA_DROPOUT,
     )
 
-    base = model_class.from_pretrained(model_name)
-    base.to(torch.device("cpu"))
-    logging.info(f"QLoRA ({task_type}): LoRA (CPU-only) enabled")
+    if torch.cuda.is_available():
+        base = model_class.from_pretrained(model_name)
+        base = prepare_model_for_kbit_training(base)
+        gpu_path_enabled = True
+        logging.info(f"QLoRA ({task_type}): GPU path enabled without 4-bit quantization")
+    else:
+        base = model_class.from_pretrained(model_name)
+        base.to(torch.device("cpu"))
+        gpu_path_enabled = False
+        logging.info(f"QLoRA ({task_type}): LoRA (CPU-only) enabled")
 
     model = get_peft_model(base, lora_config)
     trainable, total = model.get_nb_trainable_parameters()
     logging.info(f"QLoRA ({task_type}): {trainable:,} / {total:,} parameters trainable ({100 * trainable / total:.2f}%)")
-    return model, trainable
+    return model, trainable, gpu_path_enabled
 
 
 def _build_trainer(
@@ -90,7 +97,7 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
         max_samples=context["max_samples"],
     )
 
-    model, trainable = _load_qlora_model(model_name, task_type)
+    model, trainable, quantized = _load_qlora_model(model_name, task_type)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     ensure_padding_token(tokenizer)
     data_collator = build_data_collator(tokenizer, task_type)
