@@ -323,18 +323,20 @@ def create_upload_local_dataset_endpoint(config: LocalDatasetsConfig, s3_config:
         namespace = _get_request_namespace(request)
         try:
             store = _create_store(config=config, s3_config=s3_config)
-        except Exception as error:
+        except Exception:
             return get_json_error_response(
-                content={"error": f"Failed to initialize local dataset storage: {type(error).__name__}"},
+                content={"error": "Failed to initialize local dataset storage."},
                 status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 max_age=0,
             )
 
         try:
             form: FormData = await request.form()
-        except Exception as error:
+        except Exception:
             return get_json_error_response(
-                content={"error": f"Invalid multipart upload request: {type(error).__name__}: {error}"},
+                content={
+                    "error": "Invalid multipart upload request. Ensure the request uses multipart/form-data and the API has multipart support installed."
+                },
                 status_code=HTTPStatus.BAD_REQUEST,
                 max_age=0,
             )
@@ -379,7 +381,7 @@ def create_upload_local_dataset_endpoint(config: LocalDatasetsConfig, s3_config:
             if store.fs.exists(stored_file_path):
                 store.fs.rm(stored_file_path, recursive=False)
             return get_json_error_response(
-                content={"error": f"Failed to parse uploaded file: {type(error).__name__}: {error}"},
+                content={"error": f"Failed to parse uploaded file: {type(error).__name__}"},
                 status_code=HTTPStatus.BAD_REQUEST,
                 max_age=0,
             )
