@@ -12,9 +12,21 @@ from libapi.utils import Endpoint, get_json_error_response, get_json_ok_response
 from libcommon.prometheus import StepProfiler
 from libcommon.queue.jobs import Queue
 from libcommon.storage_client import StorageClient
-from libcommon.train import TrainValidationError, parse_training_request
+from libcommon.train import TrainValidationError, get_training_capabilities, parse_training_request
 from starlette.requests import Request
 from starlette.responses import Response
+
+
+def create_train_capabilities_endpoint() -> Endpoint:
+    async def train_capabilities_endpoint(request: Request) -> Response:
+        with StepProfiler("train-capabilities", "endpoint"):
+            if request.method != "GET":
+                return get_json_error_response(
+                    content={"error": "Method not allowed"}, status_code=HTTPStatus.METHOD_NOT_ALLOWED
+                )
+            return get_json_ok_response(content=get_training_capabilities(), max_age=0)
+
+    return train_capabilities_endpoint
 
 
 def create_train_endpoint(

@@ -34,6 +34,29 @@ DEFAULT_EPOCHS = 3
 DEFAULT_BATCH_SIZE = 32
 DEFAULT_LEARNING_RATE = 1e-3
 
+SUPPORTED_TASK_TYPES: frozenset[str] = frozenset(
+    {
+        "text-classification",
+        "token-classification",
+        "seq2seq",
+        "summarization",
+        "causal-lm",
+        "question-answering",
+    }
+)
+
+SUPPORTED_TRAINING_ALGORITHMS: frozenset[str] = frozenset(
+    {
+        "linear-probing",
+        "full-finetune",
+        "lora",
+        "qlora",
+        "prefix-tuning",
+        "prompt-tuning",
+        "adapter-tuning",
+    }
+)
+
 
 _TRAIN_PARAM_ALIASES = {
     "modelName": "model_name",
@@ -105,6 +128,13 @@ def _to_bounded_float(value: Any, field_name: str, min_value: float, max_value: 
     return parsed
 
 
+def get_training_capabilities() -> dict[str, list[str]]:
+    return {
+        "task_types": sorted(SUPPORTED_TASK_TYPES),
+        "training_algorithms": sorted(SUPPORTED_TRAINING_ALGORITHMS),
+    }
+
+
 def normalize_training_params(params: Mapping[str, Any], strict: bool = True) -> TrainingParameters:
     normalized: dict[str, Any] = {}
 
@@ -139,6 +169,10 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
     task_type_value = normalized.get("task_type", "text-classification")
     if not _is_non_empty_string(task_type_value):
         raise TrainValidationError("'taskType' must be a non-empty string")
+    task_type = task_type_value.strip()
+    if task_type not in SUPPORTED_TASK_TYPES:
+        supported = ", ".join(sorted(SUPPORTED_TASK_TYPES))
+        raise TrainValidationError(f"Unsupported taskType '{task_type}'. Supported: {supported}")
 
     training_algorithm_value = normalized.get("training_algorithm")
     training_algorithm: Optional[str]
@@ -148,6 +182,11 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
         if not _is_non_empty_string(training_algorithm_value):
             raise TrainValidationError("'trainingAlgorithm' must be a non-empty string")
         training_algorithm = training_algorithm_value.strip()
+        if training_algorithm not in SUPPORTED_TRAINING_ALGORITHMS:
+            supported = ", ".join(sorted(SUPPORTED_TRAINING_ALGORITHMS))
+            raise TrainValidationError(
+                f"Unsupported trainingAlgorithm '{training_algorithm}'. Supported: {supported}"
+            )
 
     train_split_value = normalized.get("train_split", "train")
     if not _is_non_empty_string(train_split_value):
@@ -184,7 +223,7 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
         "batch_size": batch_size,
         "learning_rate": learning_rate,
         "seed": seed,
-        "task_type": task_type_value.strip(),
+        "task_type": task_type,
         "training_algorithm": training_algorithm,
         "train_split": train_split_value.strip(),
         "eval_split": eval_split,

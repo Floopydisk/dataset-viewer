@@ -149,3 +149,42 @@ def test_train_get_returns_failed_when_cache_is_an_error(client: TestClient) -> 
     assert payload["status"] == "failed"
     assert payload["error_code"] == "TrainingError"
     assert payload["result"] == {"error": "training failed"}
+
+
+def test_train_capabilities_returns_supported_values(client: TestClient) -> None:
+    response = client.get("/train/capabilities")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "task_types" in payload
+    assert "training_algorithms" in payload
+    assert "text-classification" in payload["task_types"]
+    assert "full-finetune" in payload["training_algorithms"]
+
+
+def test_train_post_rejects_unsupported_task_type(client: TestClient) -> None:
+    response = client.post(
+        "/train",
+        json={
+            "dataset": "org/dataset",
+            "modelName": "bert-base-uncased",
+            "taskType": "image-classification",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Unsupported taskType" in response.json()["error"]
+
+
+def test_train_post_rejects_unsupported_training_algorithm(client: TestClient) -> None:
+    response = client.post(
+        "/train",
+        json={
+            "dataset": "org/dataset",
+            "modelName": "bert-base-uncased",
+            "trainingAlgorithm": "my-custom-algo",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Unsupported trainingAlgorithm" in response.json()["error"]

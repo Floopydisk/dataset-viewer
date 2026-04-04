@@ -31,7 +31,7 @@ from api.routes.local_datasets import (
     create_local_dataset_search_endpoint,
     create_upload_local_dataset_endpoint,
 )
-from api.routes.train import create_train_endpoint
+from api.routes.train import create_train_capabilities_endpoint, create_train_endpoint
 
 
 def create_app() -> Starlette:
@@ -95,6 +95,16 @@ def create_app_with_config(app_config: AppConfig, endpoint_config: EndpointConfi
         raise RuntimeError("The connection to the queue database could not be established. Exiting.")
 
     local_datasets_routes = [
+        Route(
+            "/train/capabilities",
+            endpoint=create_train_capabilities_endpoint(),
+            methods=["GET"],
+        ),
+        Route(
+            "/api/train/capabilities",
+            endpoint=create_train_capabilities_endpoint(),
+            methods=["GET"],
+        ),
         Route(
             "/train",
             endpoint=create_train_endpoint(

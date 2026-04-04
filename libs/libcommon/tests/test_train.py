@@ -3,7 +3,14 @@
 
 import pytest
 
-from libcommon.train import TrainValidationError, normalize_training_params, parse_training_request
+from libcommon.train import (
+    SUPPORTED_TASK_TYPES,
+    SUPPORTED_TRAINING_ALGORITHMS,
+    TrainValidationError,
+    get_training_capabilities,
+    normalize_training_params,
+    parse_training_request,
+)
 
 
 def test_normalize_training_params_accepts_aliases() -> None:
@@ -66,3 +73,20 @@ def test_parse_training_request_uses_defaults() -> None:
 def test_parse_training_request_rejects_dataset_mismatch() -> None:
     with pytest.raises(TrainValidationError, match="must match"):
         parse_training_request(body={"dataset": "org/one"}, dataset_query="org/two")
+
+
+def test_normalize_training_params_rejects_unsupported_task_type() -> None:
+    with pytest.raises(TrainValidationError, match="Unsupported taskType"):
+        normalize_training_params({"taskType": "image-classification"})
+
+
+def test_normalize_training_params_rejects_unsupported_training_algorithm() -> None:
+    with pytest.raises(TrainValidationError, match="Unsupported trainingAlgorithm"):
+        normalize_training_params({"trainingAlgorithm": "my-custom-algo"})
+
+
+def test_get_training_capabilities_returns_supported_values() -> None:
+    capabilities = get_training_capabilities()
+
+    assert capabilities["task_types"] == sorted(SUPPORTED_TASK_TYPES)
+    assert capabilities["training_algorithms"] == sorted(SUPPORTED_TRAINING_ALGORITHMS)
