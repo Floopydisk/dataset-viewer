@@ -54,8 +54,8 @@ RUN mkdir -p /src/libs/libviewer && \
 
 # Install libcommon's dependencies but not libcommon itself.
 COPY libs/libcommon/poetry.lock \
-     libs/libcommon/pyproject.toml \
-     /src/libs/libcommon/
+    libs/libcommon/pyproject.toml \
+    /src/libs/libcommon/
 WORKDIR /src/libs/libcommon
 RUN poetry install --no-cache --no-root
 
@@ -77,6 +77,7 @@ RUN poetry install --no-cache
 FROM libapi AS api
 COPY services/api /src/services/api
 WORKDIR /src/services/api
+RUN poetry lock
 RUN poetry install --no-cache
 CMD ["poetry", "run", "python", "src/api/main.py"]
 
@@ -127,8 +128,8 @@ COPY services/worker /src/services/worker
 WORKDIR /src/services/worker
 # presidio-analyzer > spacy > thinc doesn't ship aarch64 wheels so need to compile
 RUN if [ "$(uname -m)" = "aarch64" ]; then \
-      apt-get update && apt-get install -y build-essential && \
-      rm -rf /var/lib/apt/lists/*; \
+    apt-get update && apt-get install -y build-essential && \
+    rm -rf /var/lib/apt/lists/*; \
     fi
 RUN poetry lock
 RUN poetry install --no-cache
