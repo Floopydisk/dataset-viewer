@@ -24,6 +24,7 @@ server {
   listen ${PORT};
   listen [::]:${PORT};
   server_name ${HOST};
+  client_max_body_size 200m;
   resolver 127.0.0.11 valid=30s ipv6=off;
   set $assets_storage_root ${ASSETS_STORAGE_ROOT};
   set $cached_assets_storage_root ${CACHED_ASSETS_STORAGE_ROOT};
