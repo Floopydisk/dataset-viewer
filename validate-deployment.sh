@@ -60,6 +60,32 @@ else
 fi
 
 echo
+echo "Testing training endpoints..."
+if curl -sf "http://localhost/train/capabilities" | grep -q "task_types"; then
+    echo "✅ /train/capabilities endpoint working"
+else
+    echo "❌ /train/capabilities endpoint failed"
+    echo "   This usually means the API container is not running the latest image/code."
+    echo "   Suggested fix: docker-compose -f docker-compose.ec2.yml --env-file .env.production up -d --build api reverse-proxy"
+fi
+
+if curl -sf "http://localhost/api/train/capabilities" | grep -q "training_algorithms"; then
+    echo "✅ /api/train/capabilities alias working"
+else
+    echo "❌ /api/train/capabilities alias failed"
+    echo "   Suggested fix: restart api + reverse-proxy containers and validate again."
+fi
+
+echo "Testing direct API container train route..."
+if curl -sf "http://localhost:8080/train/capabilities" | grep -q "task_types"; then
+    echo "✅ API service exposes /train/capabilities directly"
+else
+    echo "❌ API service on :8080 does not expose /train/capabilities"
+    echo "   API container is likely stale. Rebuild with:"
+    echo "   docker-compose -f docker-compose.ec2.yml --env-file .env.production up -d --build api"
+fi
+
+echo
 echo "Checking Docker compose status..."
 docker-compose ps
 

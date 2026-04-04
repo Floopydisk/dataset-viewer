@@ -82,8 +82,17 @@ Optional auth:
 
 - [ ] Run validation script: `bash validate-deployment.sh`
 - [ ] Check API responds: `curl http://localhost/healthcheck`
+- [ ] Check training capabilities: `curl http://localhost/train/capabilities`
+- [ ] Check training alias: `curl http://localhost/api/train/capabilities`
 - [ ] Check worker logs: `docker-compose logs worker | head -20`
 - [ ] No errors in logs
+
+If training capabilities return 404, rebuild API + reverse proxy:
+
+```bash
+docker-compose -f docker-compose.ec2.yml --env-file .env.production up -d --build api reverse-proxy
+bash validate-deployment.sh
+```
 
 ## Post-Launch Checklist
 

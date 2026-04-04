@@ -90,17 +90,28 @@ Once all services are healthy (green in `docker-compose ps`):
    curl http://<ec2-public-ip>/healthcheck
    ```
 
-2. **Test API:**
+2. **Verify training capabilities routes:**
+   ```bash
+   curl http://<ec2-public-ip>/train/capabilities
+   curl http://<ec2-public-ip>/api/train/capabilities
+   ```
+
+   If either returns 404, your API/reverse-proxy containers are likely stale. Rebuild:
+   ```bash
+   docker-compose -f docker-compose.ec2.yml --env-file .env.production up -d --build api reverse-proxy
+   ```
+
+3. **Test API:**
    ```bash
    curl http://<ec2-public-ip>/splits?dataset=ibm/duorc
    ```
 
-3. **Check worker processing:**
+4. **Check worker processing:**
    ```bash
    docker-compose logs worker | grep "Processing job"
    ```
 
-4. **Verify S3 writes:**
+5. **Verify S3 writes:**
    ```bash
    docker-compose logs worker | grep "storage"
    ```
