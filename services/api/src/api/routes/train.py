@@ -264,6 +264,94 @@ def create_train_endpoint(
                             status_code=HTTPStatus.NOT_FOUND,
                         )
 
+                elif request.method == "DELETE":
+                    job_id = request.query_params.get("job_id")
+                    if not dataset:
+                        return get_json_error_response(
+                            content={"error": "'dataset' is required"}, status_code=HTTPStatus.BAD_REQUEST
+                        )
+                    if not job_id:
+                        return get_json_error_response(
+                            content={"error": "'job_id' is required"}, status_code=HTTPStatus.BAD_REQUEST
+                        )
+
+                    if _is_local_dataset_reference(dataset):
+                        if local_datasets_config is None:
+                            return get_json_error_response(
+                                content={"error": "Local datasets are not configured on this deployment."},
+                                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                            )
+                        access_error = _get_access_error_response(request=request, config=local_datasets_config)
+                        if access_error is not None:
+                            return access_error
+
+                        expected_namespace, _ = _parse_local_dataset_reference(dataset)
+                        request_namespace = _get_request_namespace(request)
+                        if expected_namespace != request_namespace:
+                            return get_json_error_response(
+                                content={"error": "Not authorized to cancel this training job."},
+                                status_code=HTTPStatus.FORBIDDEN,
+                            )
+                    else:
+                        await auth_check(
+                            dataset=dataset,
+                            request=request,
+                            external_auth_url=external_auth_url,
+                            hf_jwt_public_keys=hf_jwt_public_keys,
+                            hf_jwt_algorithm=hf_jwt_algorithm,
+                            hf_timeout_seconds=hf_timeout_seconds,
+                        )
+
+                    try:
+                        queue = Queue()
+                        deleted_count = queue.delete_waiting_jobs_by_job_id([job_id])
+                        
+                        if deleted_count > 0:
+                            return get_json_ok_response(
+                                {
+                                    "job_id": job_id,
+                                    "status": "cancelled",
+                                    "message": "Training job cancelled successfully",
+                                },
+                                max_age=0,
+                            )
+                        else:
+                            # Job already started or doesn't exist
+                            try:
+                                job = queue.get_job_with_id(job_id=job_id)
+                                if job.type != "dataset-train":
+                                    return get_json_error_response(
+                                        content={"error": "job_id does not belong to a training job"},
+                                        status_code=HTTPStatus.BAD_REQUEST,
+                                    )
+                                if job.dataset != dataset:
+                                    return get_json_error_response(
+                                        content={"error": "job_id does not belong to the requested dataset"},
+                                        status_code=HTTPStatus.BAD_REQUEST,
+                                    )
+                                
+                                if job.status.value == "started":
+                                    return get_json_error_response(
+                                        content={
+                                            "error": "Cannot cancel a job that is already running. "
+                                            "Running jobs must complete or be forcefully terminated by an administrator."
+                                        },
+                                        status_code=HTTPStatus.CONFLICT,
+                                    )
+                            except DoesNotExist:
+                                pass
+                            
+                            return get_json_error_response(
+                                content={"error": "Training job not found or already completed"},
+                                status_code=HTTPStatus.NOT_FOUND,
+                            )
+                    except Exception as e:
+                        logging.error(f"Error cancelling training job: {e}")
+                        return get_json_error_response(
+                            content={"error": "Failed to cancel training job", "cause": str(e)},
+                            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        )
+
                 else:
                     return get_json_error_response(
                         content={"error": "Method not allowed"}, status_code=HTTPStatus.METHOD_NOT_ALLOWED

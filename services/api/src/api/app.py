@@ -118,7 +118,7 @@ def create_app_with_config(app_config: AppConfig, endpoint_config: EndpointConfi
                 local_datasets_config=app_config.local_datasets,
                 s3_config=app_config.s3,
             ),
-            methods=["POST", "GET"],
+            methods=["POST", "GET", "DELETE"],
         ),
         Route(
             "/api/train",
@@ -133,7 +133,7 @@ def create_app_with_config(app_config: AppConfig, endpoint_config: EndpointConfi
                 local_datasets_config=app_config.local_datasets,
                 s3_config=app_config.s3,
             ),
-            methods=["POST", "GET"],
+            methods=["POST", "GET", "DELETE"],
         ),
         Route(
             "/local-datasets",
