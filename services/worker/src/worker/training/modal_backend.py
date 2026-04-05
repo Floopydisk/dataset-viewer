@@ -145,6 +145,21 @@ def run_training_on_modal(
     )
 
     run_id = str(result.get("run_id", "")).strip() or None
+    runtime_metadata = {
+        "structured_model_path": structured_model_path,
+        "execution_backend": "modal",
+        "modal_auto_shutdown": True,
+    }
+    if run_id:
+        runtime_metadata["modal_run_id"] = run_id
+        if modal_config.logs_url_template:
+            runtime_metadata["modal_logs_url"] = _render_url_template(modal_config.logs_url_template, run_id)
+        if modal_config.status_url_template:
+            runtime_metadata["modal_status_url"] = _render_url_template(modal_config.status_url_template, run_id)
+        if modal_config.cancel_url_template:
+            runtime_metadata["modal_cancel_url"] = _render_url_template(modal_config.cancel_url_template, run_id)
+    Queue().update_job_params_dict(context["job_id"], runtime_metadata)
+
     if run_id and modal_config.status_url_template:
         status_url = _render_url_template(modal_config.status_url_template, run_id)
         logs_url = (
@@ -152,11 +167,16 @@ def run_training_on_modal(
             if modal_config.logs_url_template
             else None
         )
+        cancel_url = (
+            _render_url_template(modal_config.cancel_url_template, run_id)
+            if modal_config.cancel_url_template
+            else None
+        )
+        last_runtime_snapshot: dict[str, Any] = {}
         while True:
             cancellation_checker = context.get("cancellation_checker")
             if cancellation_checker is not None and cancellation_checker():
-                if modal_config.cancel_url_template:
-                    cancel_url = _render_url_template(modal_config.cancel_url_template, run_id)
+                if cancel_url:
                     _request_json(
                         url=cancel_url,
                         headers=headers,
@@ -173,6 +193,24 @@ def run_training_on_modal(
                 method="GET",
             )
             state = _extract_state(result)
+
+            runtime_snapshot: dict[str, Any] = {
+                "modal_remote_status": state or "unknown",
+            }
+            message = result.get("message")
+            if isinstance(message, str) and message:
+                runtime_snapshot["modal_remote_message"] = message
+            updated_at = result.get("updated_at")
+            if isinstance(updated_at, str) and updated_at:
+                runtime_snapshot["modal_remote_updated_at"] = updated_at
+            finished_at = result.get("finished_at")
+            if isinstance(finished_at, str) and finished_at:
+                runtime_snapshot["modal_remote_finished_at"] = finished_at
+
+            if runtime_snapshot != last_runtime_snapshot:
+                Queue().update_job_params_dict(context["job_id"], runtime_snapshot)
+                last_runtime_snapshot = runtime_snapshot
+
             if state in TERMINAL_SUCCESS_STATES | TERMINAL_CANCELLED_STATES | TERMINAL_FAILED_STATES:
                 if logs_url:
                     artifacts = result.get("artifacts")
@@ -181,20 +219,6 @@ def run_training_on_modal(
                         result["artifacts"].setdefault("modal_logs_url", logs_url)
                 break
             time.sleep(max(1, modal_config.poll_interval_seconds))
-
-    runtime_metadata = {
-        "structured_model_path": structured_model_path,
-        "execution_backend": "modal",
-        "modal_auto_shutdown": True,
-    }
-    if run_id:
-        runtime_metadata["modal_run_id"] = run_id
-        if modal_config.logs_url_template:
-            runtime_metadata["modal_logs_url"] = _render_url_template(modal_config.logs_url_template, run_id)
-        if modal_config.status_url_template:
-            runtime_metadata["modal_status_url"] = _render_url_template(modal_config.status_url_template, run_id)
-
-    Queue().update_job_params_dict(context["job_id"], runtime_metadata)
 
     status = _extract_state(result)
     if status in TERMINAL_CANCELLED_STATES:
@@ -211,12 +235,21 @@ def run_training_on_modal(
     artifacts.setdefault("structured_model_path", structured_model_path)
     artifacts.setdefault("execution_backend", "modal")
     artifacts.setdefault("modal_auto_shutdown", True)
+    artifacts.setdefault("modal_remote_status", status or "unknown")
+    if isinstance(result.get("message"), str):
+        artifacts.setdefault("modal_remote_message", str(result["message"]))
+    if isinstance(result.get("updated_at"), str):
+        artifacts.setdefault("modal_remote_updated_at", str(result["updated_at"]))
+    if isinstance(result.get("finished_at"), str):
+        artifacts.setdefault("modal_remote_finished_at", str(result["finished_at"]))
     if run_id:
         artifacts.setdefault("modal_run_id", run_id)
         if modal_config.logs_url_template:
             artifacts.setdefault("modal_logs_url", _render_url_template(modal_config.logs_url_template, run_id))
         if modal_config.status_url_template:
             artifacts.setdefault("modal_status_url", _render_url_template(modal_config.status_url_template, run_id))
+        if modal_config.cancel_url_template:
+            artifacts.setdefault("modal_cancel_url", _render_url_template(modal_config.cancel_url_template, run_id))
 
     return {
         "metrics": metrics,

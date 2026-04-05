@@ -118,6 +118,57 @@ def test_train_get_returns_job_state_by_job_id(client: TestClient) -> None:
     assert running_response.json()["status"] == "running"
 
 
+def test_train_get_returns_live_modal_metadata_for_running_job(client: TestClient) -> None:
+    post_response = client.post(
+        "/train",
+        json={
+            "dataset": "org/dataset",
+            "modelName": "bert-base-uncased",
+            "trainingAlgorithm": "lora",
+        },
+    )
+    assert post_response.status_code == 200
+    job_id = post_response.json()["job_id"]
+
+    queue = Queue()
+    job_info = queue.start_job()
+    assert job_info["job_id"] == job_id
+
+    queue.update_job_params_dict(
+        job_id,
+        {
+            "modal_run_id": "run-live-1",
+            "modal_status_url": "https://modal.example.com/runs/run-live-1",
+            "modal_logs_url": "https://modal.example.com/runs/run-live-1/logs",
+            "modal_cancel_url": "https://modal.example.com/runs/run-live-1/cancel",
+            "modal_remote_status": "running",
+            "modal_remote_message": "Epoch 2/5 in progress",
+            "modal_remote_updated_at": "2026-04-05T12:10:00Z",
+            "structured_model_path": "models/dataset/org--dataset/revision/main/algorithm/lora/experiment/default/job/job-123/20260405T000000Z",
+            "execution_backend": "modal",
+            "modal_auto_shutdown": True,
+        },
+    )
+
+    response = client.get("/train", params={"dataset": "org/dataset", "job_id": job_id})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "running"
+    assert payload["modal"] == {
+        "modal_run_id": "run-live-1",
+        "modal_status_url": "https://modal.example.com/runs/run-live-1",
+        "modal_logs_url": "https://modal.example.com/runs/run-live-1/logs",
+        "modal_cancel_url": "https://modal.example.com/runs/run-live-1/cancel",
+        "modal_remote_status": "running",
+        "modal_remote_message": "Epoch 2/5 in progress",
+        "modal_remote_updated_at": "2026-04-05T12:10:00Z",
+        "structured_model_path": "models/dataset/org--dataset/revision/main/algorithm/lora/experiment/default/job/job-123/20260405T000000Z",
+        "execution_backend": "modal",
+        "modal_auto_shutdown": True,
+    }
+
+
 def test_train_get_returns_succeeded_when_cache_is_available(client: TestClient) -> None:
     upsert_response(
         kind="dataset-train",

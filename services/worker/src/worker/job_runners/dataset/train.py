@@ -74,6 +74,7 @@ class DatasetTrainJobRunner(DatasetJobRunner):
         seed = training_params["seed"]
         task_type = training_params["task_type"]
         training_algorithm = training_params["training_algorithm"]
+        resolved_training_algorithm = training_algorithm
         train_split = training_params["train_split"]
         eval_split = training_params["eval_split"]
         max_samples = training_params["max_samples"]
@@ -106,16 +107,29 @@ class DatasetTrainJobRunner(DatasetJobRunner):
             "cancellation_checker": lambda: Queue().is_job_cancellation_requested(self.job_info["job_id"]),
         }
 
-        if training_algorithm:
+        if self.app_config.modal_training.execution_backend == "modal":
+            # Ensure every training job goes through Modal when modal backend is enabled.
+            resolved_training_algorithm = training_algorithm or "full-finetune"
             try:
-                if self.app_config.modal_training.execution_backend == "modal":
-                    algorithm_result = run_training_on_modal(
-                        context=context,
-                        modal_config=self.app_config.modal_training,
-                        training_algorithm=training_algorithm,
-                    )
-                else:
-                    algorithm_result = run_training_algorithm(name=training_algorithm, context=context)
+                algorithm_result = run_training_on_modal(
+                    context=context,
+                    modal_config=self.app_config.modal_training,
+                    training_algorithm=resolved_training_algorithm,
+                )
+                metrics = dict(algorithm_result["metrics"])
+                artifacts = dict(algorithm_result["artifacts"])
+                artifacts.setdefault("structured_model_path", self._default_structured_model_path(resolved_training_algorithm))
+                artifacts.setdefault("execution_backend", self.app_config.modal_training.execution_backend)
+                result_status = "success"
+                result_message = f"Training job completed for {self.dataset}"
+            except TrainingCancelledError:
+                metrics = {}
+                artifacts = {}
+                result_status = "cancelled"
+                result_message = f"Training job was cancelled for {self.dataset}"
+        elif training_algorithm:
+            try:
+                algorithm_result = run_training_algorithm(name=training_algorithm, context=context)
                 metrics = dict(algorithm_result["metrics"])
                 artifacts = dict(algorithm_result["artifacts"])
                 artifacts.setdefault("structured_model_path", self._default_structured_model_path(training_algorithm))
@@ -147,7 +161,7 @@ class DatasetTrainJobRunner(DatasetJobRunner):
                 "message": result_message,
                 "model_name": model_name,
                 "task_type": task_type,
-                "training_algorithm": training_algorithm,
+                "training_algorithm": resolved_training_algorithm,
                 "train_split": train_split,
                 "eval_split": eval_split,
                 "max_samples": max_samples,

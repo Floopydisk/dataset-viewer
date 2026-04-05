@@ -16,11 +16,13 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
-from starlette.routing import Route
+from starlette.routing import Route, WebSocketRoute
 from starlette_prometheus import PrometheusMiddleware
 
 from sse_api.config import AppConfig
 from sse_api.routes.hub_cache import create_hub_cache_endpoint
+from sse_api.routes.training import create_train_status_websocket_endpoint
+from sse_api.training_watcher import TrainingWatcher
 from sse_api.watcher import HubCacheWatcher
 
 
@@ -45,6 +47,10 @@ def create_app_with_config(app_config: AppConfig) -> Starlette:
         db_name=app_config.cache.mongo_database,
         collection_name=CACHE_COLLECTION_RESPONSES,
     )
+    training_watcher = TrainingWatcher(
+        client=AsyncIOMotorClient(host=app_config.queue.mongo_url, io_loop=asyncio.get_running_loop()),
+        db_name=app_config.queue.mongo_database,
+    )
 
     middleware = [
         Middleware(
@@ -62,6 +68,7 @@ def create_app_with_config(app_config: AppConfig) -> Starlette:
 
     routes = [
         Route("/sse/hub-cache", endpoint=create_hub_cache_endpoint(hub_cache_watcher=hub_cache_watcher)),
+        WebSocketRoute("/sse/train/ws", endpoint=create_train_status_websocket_endpoint(training_watcher=training_watcher)),
         Route("/healthcheck", endpoint=healthcheck_endpoint),
         # ^ called by ALB
         Route("/sse/healthcheck", endpoint=healthcheck_endpoint),
@@ -73,8 +80,8 @@ def create_app_with_config(app_config: AppConfig) -> Starlette:
     return Starlette(
         routes=routes,
         middleware=middleware,
-        on_startup=[hub_cache_watcher.start_watching],
-        on_shutdown=[hub_cache_watcher.stop_watching],
+        on_startup=[hub_cache_watcher.start_watching, training_watcher.start_watching],
+        on_shutdown=[hub_cache_watcher.stop_watching, training_watcher.stop_watching],
     )
 
 
