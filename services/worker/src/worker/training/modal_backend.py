@@ -54,6 +54,42 @@ def _extract_state(result: Mapping[str, Any]) -> str:
     return str(result.get("status", "")).strip().lower()
 
 
+def _request_sse_events(
+    *,
+    url: str,
+    headers: Mapping[str, str],
+    timeout_seconds: int,
+) -> list[dict[str, Any]]:
+    request_headers = dict(headers)
+    request_headers["Accept"] = "text/event-stream"
+    req = request.Request(url=url, headers=request_headers, method="GET")
+    events: list[dict[str, Any]] = []
+
+    with request.urlopen(req, timeout=timeout_seconds) as response:
+        data_lines: list[str] = []
+        for raw_line in response:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line:
+                if data_lines:
+                    payload = "\n".join(data_lines)
+                    data_lines = []
+                    try:
+                        parsed = json.loads(payload)
+                        if isinstance(parsed, dict):
+                            events.append(parsed)
+                            state = _extract_state(parsed)
+                            if state in TERMINAL_SUCCESS_STATES | TERMINAL_CANCELLED_STATES | TERMINAL_FAILED_STATES:
+                                break
+                    except json.JSONDecodeError:
+                        continue
+                continue
+
+            if line.startswith("data:"):
+                data_lines.append(line[len("data:") :].strip())
+
+    return events
+
+
 def _slugify(value: str) -> str:
     return value.strip().replace("/", "--").replace(" ", "-")
 
@@ -162,6 +198,7 @@ def run_training_on_modal(
 
     if run_id and modal_config.status_url_template:
         status_url = _render_url_template(modal_config.status_url_template, run_id)
+        events_url = f"{status_url}/events"
         logs_url = (
             _render_url_template(modal_config.logs_url_template, run_id)
             if modal_config.logs_url_template
@@ -173,52 +210,106 @@ def run_training_on_modal(
             else None
         )
         last_runtime_snapshot: dict[str, Any] = {}
-        while True:
-            cancellation_checker = context.get("cancellation_checker")
-            if cancellation_checker is not None and cancellation_checker():
-                if cancel_url:
-                    _request_json(
-                        url=cancel_url,
-                        headers=headers,
-                        timeout_seconds=modal_config.request_timeout_seconds,
-                        method="POST",
-                        payload={"run_id": run_id},
-                    )
-                raise TrainingCancelledError("Training cancelled while waiting for modal run completion.")
-
-            result = _request_json(
-                url=status_url,
+        used_streaming = False
+        try:
+            stream_events = _request_sse_events(
+                url=events_url,
                 headers=headers,
                 timeout_seconds=modal_config.request_timeout_seconds,
-                method="GET",
             )
-            state = _extract_state(result)
+            used_streaming = len(stream_events) > 0
+            for event in stream_events:
+                result = event
+                state = _extract_state(result)
 
-            runtime_snapshot: dict[str, Any] = {
-                "modal_remote_status": state or "unknown",
-            }
-            message = result.get("message")
-            if isinstance(message, str) and message:
-                runtime_snapshot["modal_remote_message"] = message
-            updated_at = result.get("updated_at")
-            if isinstance(updated_at, str) and updated_at:
-                runtime_snapshot["modal_remote_updated_at"] = updated_at
-            finished_at = result.get("finished_at")
-            if isinstance(finished_at, str) and finished_at:
-                runtime_snapshot["modal_remote_finished_at"] = finished_at
+                runtime_snapshot: dict[str, Any] = {
+                    "modal_remote_status": state or "unknown",
+                }
+                message = result.get("message")
+                if isinstance(message, str) and message:
+                    runtime_snapshot["modal_remote_message"] = message
+                updated_at = result.get("updated_at")
+                if isinstance(updated_at, str) and updated_at:
+                    runtime_snapshot["modal_remote_updated_at"] = updated_at
+                finished_at = result.get("finished_at")
+                if isinstance(finished_at, str) and finished_at:
+                    runtime_snapshot["modal_remote_finished_at"] = finished_at
+                stage = result.get("stage")
+                if isinstance(stage, str) and stage:
+                    runtime_snapshot["modal_remote_stage"] = stage
 
-            if runtime_snapshot != last_runtime_snapshot:
-                Queue().update_job_params_dict(context["job_id"], runtime_snapshot)
-                last_runtime_snapshot = runtime_snapshot
+                if runtime_snapshot != last_runtime_snapshot:
+                    Queue().update_job_params_dict(context["job_id"], runtime_snapshot)
+                    last_runtime_snapshot = runtime_snapshot
 
-            if state in TERMINAL_SUCCESS_STATES | TERMINAL_CANCELLED_STATES | TERMINAL_FAILED_STATES:
-                if logs_url:
-                    artifacts = result.get("artifacts")
-                    if isinstance(artifacts, Mapping):
-                        result["artifacts"] = dict(artifacts)
-                        result["artifacts"].setdefault("modal_logs_url", logs_url)
-                break
-            time.sleep(max(1, modal_config.poll_interval_seconds))
+                cancellation_checker = context.get("cancellation_checker")
+                if cancellation_checker is not None and cancellation_checker():
+                    if cancel_url:
+                        _request_json(
+                            url=cancel_url,
+                            headers=headers,
+                            timeout_seconds=modal_config.request_timeout_seconds,
+                            method="POST",
+                            payload={"run_id": run_id},
+                        )
+                    raise TrainingCancelledError("Training cancelled while waiting for modal run completion.")
+
+                if state in TERMINAL_SUCCESS_STATES | TERMINAL_CANCELLED_STATES | TERMINAL_FAILED_STATES:
+                    break
+        except Exception:
+            used_streaming = False
+
+        if not used_streaming:
+            while True:
+                cancellation_checker = context.get("cancellation_checker")
+                if cancellation_checker is not None and cancellation_checker():
+                    if cancel_url:
+                        _request_json(
+                            url=cancel_url,
+                            headers=headers,
+                            timeout_seconds=modal_config.request_timeout_seconds,
+                            method="POST",
+                            payload={"run_id": run_id},
+                        )
+                    raise TrainingCancelledError("Training cancelled while waiting for modal run completion.")
+
+                result = _request_json(
+                    url=status_url,
+                    headers=headers,
+                    timeout_seconds=modal_config.request_timeout_seconds,
+                    method="GET",
+                )
+                state = _extract_state(result)
+
+                runtime_snapshot = {
+                    "modal_remote_status": state or "unknown",
+                }
+                message = result.get("message")
+                if isinstance(message, str) and message:
+                    runtime_snapshot["modal_remote_message"] = message
+                updated_at = result.get("updated_at")
+                if isinstance(updated_at, str) and updated_at:
+                    runtime_snapshot["modal_remote_updated_at"] = updated_at
+                finished_at = result.get("finished_at")
+                if isinstance(finished_at, str) and finished_at:
+                    runtime_snapshot["modal_remote_finished_at"] = finished_at
+                stage = result.get("stage")
+                if isinstance(stage, str) and stage:
+                    runtime_snapshot["modal_remote_stage"] = stage
+
+                if runtime_snapshot != last_runtime_snapshot:
+                    Queue().update_job_params_dict(context["job_id"], runtime_snapshot)
+                    last_runtime_snapshot = runtime_snapshot
+
+                if state in TERMINAL_SUCCESS_STATES | TERMINAL_CANCELLED_STATES | TERMINAL_FAILED_STATES:
+                    break
+                time.sleep(max(1, modal_config.poll_interval_seconds))
+
+        if logs_url:
+            artifacts = result.get("artifacts")
+            if isinstance(artifacts, Mapping):
+                result["artifacts"] = dict(artifacts)
+                result["artifacts"].setdefault("modal_logs_url", logs_url)
 
     status = _extract_state(result)
     if status in TERMINAL_CANCELLED_STATES:
@@ -238,6 +329,8 @@ def run_training_on_modal(
     artifacts.setdefault("modal_remote_status", status or "unknown")
     if isinstance(result.get("message"), str):
         artifacts.setdefault("modal_remote_message", str(result["message"]))
+    if isinstance(result.get("stage"), str):
+        artifacts.setdefault("modal_remote_stage", str(result["stage"]))
     if isinstance(result.get("updated_at"), str):
         artifacts.setdefault("modal_remote_updated_at", str(result["updated_at"]))
     if isinstance(result.get("finished_at"), str):

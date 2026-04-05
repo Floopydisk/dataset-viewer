@@ -31,7 +31,12 @@ from api.routes.local_datasets import (
     create_local_dataset_search_endpoint,
     create_upload_local_dataset_endpoint,
 )
-from api.routes.train import create_train_capabilities_endpoint, create_train_endpoint, create_train_jobs_endpoint
+from api.routes.train import (
+    create_train_capabilities_endpoint,
+    create_train_endpoint,
+    create_train_jobs_endpoint,
+    create_train_modal_proxy_endpoint,
+)
 
 
 def create_app() -> Starlette:
@@ -113,6 +118,54 @@ def create_app_with_config(app_config: AppConfig, endpoint_config: EndpointConfi
         Route(
             "/api/train/jobs",
             endpoint=create_train_jobs_endpoint(),
+            methods=["GET"],
+        ),
+        Route(
+            "/train/modal/{run_id}",
+            endpoint=create_train_modal_proxy_endpoint(
+                logs=False,
+                local_datasets_config=app_config.local_datasets,
+                external_auth_url=app_config.api.external_auth_url,
+                hf_jwt_public_keys=hf_jwt_public_keys,
+                hf_jwt_algorithm=app_config.api.hf_jwt_algorithm,
+                hf_timeout_seconds=app_config.api.hf_timeout_seconds,
+            ),
+            methods=["GET"],
+        ),
+        Route(
+            "/api/train/modal/{run_id}",
+            endpoint=create_train_modal_proxy_endpoint(
+                logs=False,
+                local_datasets_config=app_config.local_datasets,
+                external_auth_url=app_config.api.external_auth_url,
+                hf_jwt_public_keys=hf_jwt_public_keys,
+                hf_jwt_algorithm=app_config.api.hf_jwt_algorithm,
+                hf_timeout_seconds=app_config.api.hf_timeout_seconds,
+            ),
+            methods=["GET"],
+        ),
+        Route(
+            "/train/modal/{run_id}/logs",
+            endpoint=create_train_modal_proxy_endpoint(
+                logs=True,
+                local_datasets_config=app_config.local_datasets,
+                external_auth_url=app_config.api.external_auth_url,
+                hf_jwt_public_keys=hf_jwt_public_keys,
+                hf_jwt_algorithm=app_config.api.hf_jwt_algorithm,
+                hf_timeout_seconds=app_config.api.hf_timeout_seconds,
+            ),
+            methods=["GET"],
+        ),
+        Route(
+            "/api/train/modal/{run_id}/logs",
+            endpoint=create_train_modal_proxy_endpoint(
+                logs=True,
+                local_datasets_config=app_config.local_datasets,
+                external_auth_url=app_config.api.external_auth_url,
+                hf_jwt_public_keys=hf_jwt_public_keys,
+                hf_jwt_algorithm=app_config.api.hf_jwt_algorithm,
+                hf_timeout_seconds=app_config.api.hf_timeout_seconds,
+            ),
             methods=["GET"],
         ),
         Route(

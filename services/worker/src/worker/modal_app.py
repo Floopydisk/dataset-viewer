@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import uuid
 import sys
@@ -126,6 +128,7 @@ def _initial_state(base_url: str, run_id: str, payload: Mapping[str, Any]) -> di
         "logs": [f"Run {run_id} queued on Modal."],
         "cancel_requested": False,
         "message": "Training run queued.",
+        "stage": "queued",
     }
 
 
@@ -163,6 +166,11 @@ def _set_status(run_id: str, status: str, message: str | None = None, **updates:
     _store_state(run_id, state)
 
 
+def _set_stage(run_id: str, stage: str, message: str) -> None:
+    _set_status(run_id, "running", message, stage=stage)
+    _append_log(run_id, f"[{stage}] {message}")
+
+
 def _is_cancel_requested(run_id: str) -> bool:
     state = _get_state(run_id)
     return bool(state and state.get("cancel_requested"))
@@ -197,7 +205,7 @@ def train_remote(run_id: str, payload: dict[str, Any]) -> None:
     state = _get_state(run_id)
     if state is None:
         state = _initial_state(base_url=base_url, run_id=run_id, payload=payload)
-    _set_status(run_id, "running", "Training started.")
+    _set_status(run_id, "running", "Training started.", stage="initializing")
     _append_log(run_id, "Training job started.")
     _append_log(run_id, f"Dataset: {payload.get('dataset')}")
     _append_log(run_id, f"Algorithm: {payload.get('training_algorithm')}")
@@ -206,8 +214,11 @@ def train_remote(run_id: str, payload: dict[str, Any]) -> None:
         normalized = dict(payload)
         context = cast(TrainingExecutionContext, _make_training_context(run_id, normalized))
         training_algorithm = str(normalized.get("training_algorithm") or "full-finetune")
+        _set_stage(run_id, "preparing_data", "Preparing dataset and training inputs.")
         _append_log(run_id, f"Structured model path: {_structured_model_path(normalized)}")
+        _set_stage(run_id, "training", "Model training in progress. This can take several minutes.")
         algorithm_result = run_training_algorithm(name=training_algorithm, context=context)
+        _set_stage(run_id, "saving_artifacts", "Training finished. Saving artifacts and metrics.")
         metrics = dict(algorithm_result["metrics"])
         artifacts = dict(algorithm_result["artifacts"])
         artifacts.update(_run_artifacts(base_url, run_id, normalized))
@@ -218,10 +229,11 @@ def train_remote(run_id: str, payload: dict[str, Any]) -> None:
             metrics=metrics,
             artifacts=artifacts,
             finished_at=_now(),
+            stage="completed",
         )
         _append_log(run_id, "Training completed successfully.")
     except TrainingCancelledError:
-        _set_status(run_id, "cancelled", "Training was cancelled.", finished_at=_now())
+        _set_status(run_id, "cancelled", "Training was cancelled.", finished_at=_now(), stage="cancelled")
         _append_log(run_id, "Training cancelled.")
     except Exception as err:  # pragma: no cover - runtime path
         _set_status(
@@ -231,6 +243,7 @@ def train_remote(run_id: str, payload: dict[str, Any]) -> None:
             error_type=type(err).__name__,
             error_message=str(err),
             finished_at=_now(),
+            stage="failed",
         )
         _append_log(run_id, f"Training failed: {type(err).__name__}: {err}")
         raise
@@ -336,6 +349,53 @@ async def _logs(request: Any) -> Any:
     return PlainTextResponse("\n".join(str(line) for line in logs))
 
 
+async def _events(request: Any) -> Any:
+    from starlette.responses import JSONResponse, StreamingResponse
+
+    try:
+        _require_webhook_token(request)
+    except RuntimeError:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    run_id = request.path_params["run_id"]
+    state = _get_state(run_id)
+    if state is None:
+        return JSONResponse({"error": "Run not found", "status": "not_found"}, status_code=404)
+
+    async def generator() -> Any:
+        last_updated_at: str | None = None
+        while True:
+            current_state = _get_state(run_id)
+            if current_state is None:
+                break
+
+            updated_at = str(current_state.get("updated_at") or "")
+            if updated_at != last_updated_at:
+                last_updated_at = updated_at
+                yield f"data: {json.dumps(current_state)}\n\n"
+            else:
+                # keep-alive frame for long-running steps so clients don't time out.
+                yield ": keep-alive\n\n"
+
+            if str(current_state.get("status", "")).lower() in {
+                "succeeded",
+                "success",
+                "completed",
+                "failed",
+                "error",
+                "cancelled",
+                "canceled",
+            }:
+                break
+
+            if await request.is_disconnected():
+                break
+
+            await asyncio.sleep(1)
+
+    return StreamingResponse(generator(), media_type="text/event-stream")
+
+
 @app.function(image=image, secrets=[modal.Secret.from_name(WEBHOOK_SECRET_NAME, required_keys=[WEBHOOK_TOKEN_ENV_VAR])])
 @modal.asgi_app()
 def modal_training_api() -> Any:
@@ -346,6 +406,7 @@ def modal_training_api() -> Any:
         routes=[
             Route("/train", _train, methods=["POST"]),
             Route("/runs/{run_id}", _status, methods=["GET"]),
+            Route("/runs/{run_id}/events", _events, methods=["GET"]),
             Route("/runs/{run_id}/cancel", _cancel, methods=["POST"]),
             Route("/runs/{run_id}/logs", _logs, methods=["GET"]),
         ]

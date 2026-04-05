@@ -2,9 +2,13 @@
 # Copyright 2022 The HuggingFace Authors.
 
 import logging
+import os
 from http import HTTPStatus
 from collections.abc import Mapping
 from typing import Any, Optional
+from urllib import error as urlerror
+from urllib import parse as urlparse
+from urllib import request as urlrequest
 
 from mongoengine.errors import DoesNotExist
 
@@ -48,9 +52,12 @@ def _extract_modal_metadata(source: Mapping[str, Any]) -> dict[str, Any]:
         "modal_run_id",
         "modal_status_url",
         "modal_logs_url",
+        "modal_status_proxy_url",
+        "modal_logs_proxy_url",
         "modal_cancel_url",
         "modal_remote_status",
         "modal_remote_message",
+        "modal_remote_stage",
         "modal_remote_updated_at",
         "modal_remote_finished_at",
         "structured_model_path",
@@ -59,6 +66,55 @@ def _extract_modal_metadata(source: Mapping[str, Any]) -> dict[str, Any]:
     )
     modal = {field: source[field] for field in modal_fields if field in source and source[field] is not None}
     return modal
+
+
+def _append_modal_proxy_urls(modal: dict[str, Any], dataset: str) -> dict[str, Any]:
+    run_id = modal.get("modal_run_id")
+    if isinstance(run_id, str) and run_id:
+        encoded_dataset = urlparse.quote(dataset, safe="")
+        modal.setdefault("modal_status_proxy_url", f"/train/modal/{run_id}?dataset={encoded_dataset}")
+        modal.setdefault("modal_logs_proxy_url", f"/train/modal/{run_id}/logs?dataset={encoded_dataset}")
+    return modal
+
+
+async def _authorize_train_dataset_access(
+    *,
+    dataset: str,
+    request: Request,
+    local_datasets_config: Optional[LocalDatasetsConfig],
+    external_auth_url: Optional[str],
+    hf_jwt_public_keys: Optional[list[str]],
+    hf_jwt_algorithm: Optional[str],
+    hf_timeout_seconds: Optional[float],
+) -> Optional[Response]:
+    if _is_local_dataset_reference(dataset):
+        if local_datasets_config is None:
+            return get_json_error_response(
+                content={"error": "Local datasets are not configured on this deployment."},
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+        access_error = _get_access_error_response(request=request, config=local_datasets_config)
+        if access_error is not None:
+            return access_error
+
+        expected_namespace, _ = _parse_local_dataset_reference(dataset)
+        request_namespace = _get_request_namespace(request)
+        if expected_namespace != request_namespace:
+            return get_json_error_response(
+                content={"error": "Not authorized to access this local training job."},
+                status_code=HTTPStatus.FORBIDDEN,
+            )
+        return None
+
+    await auth_check(
+        dataset=dataset,
+        request=request,
+        external_auth_url=external_auth_url,
+        hf_jwt_public_keys=hf_jwt_public_keys,
+        hf_jwt_algorithm=hf_jwt_algorithm,
+        hf_timeout_seconds=hf_timeout_seconds,
+    )
+    return None
 
 
 def create_train_capabilities_endpoint() -> Endpoint:
@@ -111,7 +167,7 @@ def create_train_jobs_endpoint() -> Endpoint:
                         "started_at": job.started_at.isoformat() if job.started_at else None,
                         "cancel_requested": bool(job.cancel_requested),
                         "params": params_dict,
-                        "modal": _extract_modal_metadata(modal_source),
+                        "modal": _append_modal_proxy_urls(_extract_modal_metadata(modal_source), job.dataset),
                         "model_name": params_dict.get("model_name"),
                         "training_algorithm": params_dict.get("training_algorithm"),
                     }
@@ -141,7 +197,7 @@ def create_train_jobs_endpoint() -> Endpoint:
                         "http_status": int(entry.http_status.value),
                         "error_code": entry.error_code,
                         "result": content,
-                        "modal": _extract_modal_metadata(modal_source),
+                        "modal": _append_modal_proxy_urls(_extract_modal_metadata(modal_source), entry.dataset),
                         "model_name": content.get("model_name"),
                         "training_algorithm": content.get("training_algorithm"),
                         "model_path": model_path,
@@ -160,6 +216,83 @@ def create_train_jobs_endpoint() -> Endpoint:
             )
 
     return train_jobs_endpoint
+
+
+def create_train_modal_proxy_endpoint(
+    *,
+    logs: bool,
+    local_datasets_config: Optional[LocalDatasetsConfig],
+    external_auth_url: Optional[str],
+    hf_jwt_public_keys: Optional[list[str]],
+    hf_jwt_algorithm: Optional[str],
+    hf_timeout_seconds: Optional[float],
+) -> Endpoint:
+    async def train_modal_proxy_endpoint(request: Request) -> Response:
+        with StepProfiler("train-modal-proxy", "endpoint"):
+            if request.method != "GET":
+                return get_json_error_response(
+                    content={"error": "Method not allowed"}, status_code=HTTPStatus.METHOD_NOT_ALLOWED
+                )
+
+            dataset = request.query_params.get("dataset")
+            if not dataset:
+                return get_json_error_response(
+                    content={"error": "'dataset' is required"}, status_code=HTTPStatus.BAD_REQUEST
+                )
+
+            access_error = await _authorize_train_dataset_access(
+                dataset=dataset,
+                request=request,
+                local_datasets_config=local_datasets_config,
+                external_auth_url=external_auth_url,
+                hf_jwt_public_keys=hf_jwt_public_keys,
+                hf_jwt_algorithm=hf_jwt_algorithm,
+                hf_timeout_seconds=hf_timeout_seconds,
+            )
+            if access_error is not None:
+                return access_error
+
+            run_id = request.path_params.get("run_id")
+            if not run_id:
+                return get_json_error_response(
+                    content={"error": "'run_id' is required"}, status_code=HTTPStatus.BAD_REQUEST
+                )
+
+            template_env = "MODAL_TRAINING_LOGS_URL_TEMPLATE" if logs else "MODAL_TRAINING_STATUS_URL_TEMPLATE"
+            template = os.environ.get(template_env, "")
+            if not template:
+                return get_json_error_response(
+                    content={"error": f"{template_env} is not configured on this deployment."},
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
+
+            target_url = template.replace("{run_id}", str(run_id))
+            headers: dict[str, str] = {}
+            webhook_token = os.environ.get("MODAL_TRAINING_WEBHOOK_TOKEN", "")
+            if webhook_token:
+                headers["Authorization"] = f"Bearer {webhook_token}"
+
+            req = urlrequest.Request(url=target_url, headers=headers, method="GET")
+            try:
+                with urlrequest.urlopen(req, timeout=30) as upstream:
+                    payload = upstream.read()
+                    content_type = upstream.headers.get("Content-Type") or (
+                        "text/plain; charset=utf-8" if logs else "application/json"
+                    )
+                    return Response(content=payload, status_code=upstream.status, media_type=content_type)
+            except urlerror.HTTPError as err:
+                message = err.read().decode("utf-8", errors="replace")
+                return get_json_error_response(
+                    content={"error": "Modal proxy request failed.", "cause": message},
+                    status_code=err.code,
+                )
+            except urlerror.URLError as err:
+                return get_json_error_response(
+                    content={"error": "Modal proxy request failed.", "cause": str(err.reason)},
+                    status_code=HTTPStatus.BAD_GATEWAY,
+                )
+
+    return train_modal_proxy_endpoint
 
 
 def create_train_endpoint(
@@ -327,7 +460,7 @@ def create_train_endpoint(
                                 )
 
                             state = "running" if job.status.value == "started" else "queued"
-                            modal = _extract_modal_metadata(job.params_dict)
+                            modal = _append_modal_proxy_urls(_extract_modal_metadata(job.params_dict), dataset)
                             return get_json_ok_response(
                                 {
                                     "status": state,
@@ -355,7 +488,10 @@ def create_train_endpoint(
                             storage_clients=storage_clients,
                         )
                         if result["http_status"] != HTTPStatus.OK:
-                            modal = _extract_modal_metadata(result["content"] if isinstance(result["content"], Mapping) else {})
+                            modal = _append_modal_proxy_urls(
+                                _extract_modal_metadata(result["content"] if isinstance(result["content"], Mapping) else {}),
+                                dataset,
+                            )
                             return get_json_error_response(
                                 content={
                                     "status": "failed",
@@ -367,7 +503,10 @@ def create_train_endpoint(
                                 status_code=result["http_status"],
                                 revision=result["dataset_git_revision"],
                             )
-                        modal = _extract_modal_metadata(result["content"] if isinstance(result["content"], Mapping) else {})
+                        modal = _append_modal_proxy_urls(
+                            _extract_modal_metadata(result["content"] if isinstance(result["content"], Mapping) else {}),
+                            dataset,
+                        )
                         return get_json_ok_response(
                             content={
                                 "status": "succeeded",
