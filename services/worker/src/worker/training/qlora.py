@@ -1,23 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024 The HuggingFace Authors.
 
-"""QLoRA: Parameter-efficient LoRA training (CPU-only for development phase)."""
+"""QLoRA: Parameter-efficient LoRA training with a GPU quantized path and CPU fallback."""
 
 import logging
 from typing import Any, Optional
 
 import torch
-from datasets import Dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from transformers import AutoTokenizer, PreTrainedModel, Trainer, TrainingArguments
+from transformers import AutoTokenizer, BitsAndBytesConfig
 
 from worker.training._base import resolve_output_dir, resolve_task, set_seed
 from worker.training._data import build_data_collator, ensure_padding_token, load_splits, tokenize_split
+from worker.training._trainer import build_trainer
 from worker.training.algorithms import (
     TrainingAlgorithmResult,
     TrainingCancelledError,
     TrainingExecutionContext,
     build_cancellation_callback,
+    build_progress_callback,
 )
 
 _LORA_R = 8
@@ -26,7 +27,7 @@ _LORA_DROPOUT = 0.05
 
 
 def _load_qlora_model(model_name: str, task_type: str) -> tuple[Any, int, bool]:
-    """Load model with LoRA and keep a CPU-safe fallback.
+    """Load a quantized QLoRA model on GPU when available, otherwise fall back to CPU.
 
     Returns:
         (model, trainable_param_count, gpu_path_enabled)
@@ -40,10 +41,16 @@ def _load_qlora_model(model_name: str, task_type: str) -> tuple[Any, int, bool]:
     )
 
     if torch.cuda.is_available():
-        base = model_class.from_pretrained(model_name)
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch.float16,
+        )
+        base = model_class.from_pretrained(model_name, quantization_config=quantization_config, device_map="auto")
         base = prepare_model_for_kbit_training(base)
         gpu_path_enabled = True
-        logging.info(f"QLoRA ({task_type}): GPU path enabled without 4-bit quantization")
+        logging.info(f"QLoRA ({task_type}): GPU path enabled with 4-bit NF4 quantization")
     else:
         base = model_class.from_pretrained(model_name)
         base.to(torch.device("cpu"))
@@ -54,42 +61,6 @@ def _load_qlora_model(model_name: str, task_type: str) -> tuple[Any, int, bool]:
     trainable, total = model.get_nb_trainable_parameters()
     logging.info(f"QLoRA ({task_type}): {trainable:,} / {total:,} parameters trainable ({100 * trainable / total:.2f}%)")
     return model, trainable, gpu_path_enabled
-
-
-def _build_trainer(
-    model: Any,
-    train_ds: Dataset,
-    eval_ds: Optional[Dataset],
-    output_dir: str,
-    data_collator: Any,
-    epochs: int,
-    batch_size: int,
-    learning_rate: float,
-    seed: int,
-    use_fp16: bool,
-    callbacks: Optional[list[Any]],
-) -> Trainer:
-    args = TrainingArguments(
-        output_dir=output_dir,
-        num_train_epochs=epochs,
-        per_device_train_batch_size=batch_size,
-        learning_rate=learning_rate,
-        seed=seed,
-        eval_strategy="epoch" if eval_ds else "no",
-        save_strategy="epoch",
-        load_best_model_at_end=eval_ds is not None,
-        fp16=use_fp16,
-        logging_steps=50,
-        report_to="none",
-    )
-    return Trainer(
-        model=model,
-        args=args,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        data_collator=data_collator,
-        callbacks=callbacks,
-    )
 
 
 def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
@@ -121,7 +92,9 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
     eval_ds = tokenize_split(splits[context["eval_split"]], tokenizer, task_type) if context["eval_split"] else None
 
     cancellation_callback = build_cancellation_callback(context)
-    trainer = _build_trainer(
+    progress_callback = build_progress_callback(context)
+    callbacks = [callback for callback in (cancellation_callback, progress_callback) if callback is not None]
+    trainer = build_trainer(
         model=model,
         train_ds=train_ds,
         eval_ds=eval_ds,
@@ -131,8 +104,8 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
         batch_size=context["batch_size"],
         learning_rate=context["learning_rate"],
         seed=context["seed"] or 42,
-        use_fp16=False,
-        callbacks=[cancellation_callback] if cancellation_callback else None,
+        callbacks=callbacks or None,
+        fp16=torch.cuda.is_available(),
     )
     train_result = trainer.train()
     if cancellation_callback and cancellation_callback.cancelled:
@@ -150,7 +123,7 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
         metrics=metrics,
         artifacts={
             "trainable_params": trainable,
-            "quantization": "nf4" if quantized else "none",
+            "quantization": "4bit-nf4" if quantized else "none",
             "lora_r": _LORA_R,
             "checkpoint_dir": output_dir,
         },

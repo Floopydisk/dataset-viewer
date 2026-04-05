@@ -55,7 +55,8 @@ image = (
         "accelerate>=1.13.0",
         "peft==0.11.0",
         "datasets",
-        "torch",
+        "bitsandbytes",
+        "https://download.pytorch.org/whl/cu121/torch-2.8.0%2Bcu121-cp312-cp312-manylinux_2_28_x86_64.whl",
     )
     .env({"PYTHONPATH": "/root/services/worker/src"})
     .add_local_dir(str(WORKER_SRC_DIR), remote_path="/root/services/worker/src")
@@ -117,6 +118,9 @@ def _run_artifacts(base_url: str, run_id: str, payload: Mapping[str, Any]) -> di
 
 def _initial_state(base_url: str, run_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     artifacts = _run_artifacts(base_url, run_id, payload)
+    gpu_class = _resolve_gpu_class(payload)
+    artifacts.setdefault("modal_gpu", gpu_class)
+    artifacts.setdefault("modal_gpu_count", 1)
     return {
         "run_id": run_id,
         "status": "queued",
@@ -129,6 +133,16 @@ def _initial_state(base_url: str, run_id: str, payload: Mapping[str, Any]) -> di
         "cancel_requested": False,
         "message": "Training run queued.",
         "stage": "queued",
+        "gpu_class": gpu_class,
+        "training_eta_seconds": None,
+        "training_progress_pct": 0.0,
+        "training_submilestones": [
+            {"key": "trainer-started", "label": "Trainer started", "status": "pending"},
+            {"key": "first-steps", "label": "First batches complete", "status": "pending"},
+            {"key": "midpoint", "label": "Training midpoint", "status": "pending"},
+            {"key": "final-steps", "label": "Final optimization steps", "status": "pending"},
+            {"key": "train-loop-complete", "label": "Train loop complete", "status": "pending"},
+        ],
     }
 
 
@@ -171,6 +185,67 @@ def _set_stage(run_id: str, stage: str, message: str) -> None:
     _append_log(run_id, f"[{stage}] {message}")
 
 
+def _update_submilestones(
+    current: list[dict[str, Any]],
+    *,
+    progress_pct: float,
+    train_started: bool,
+    train_ended: bool,
+) -> list[dict[str, Any]]:
+    next_items = [dict(item) for item in current]
+    status_by_key: dict[str, str] = {
+        "trainer-started": "completed" if train_started or progress_pct > 0 else "pending",
+        "first-steps": "completed" if progress_pct >= 5 else ("in-progress" if progress_pct > 0 else "pending"),
+        "midpoint": "completed" if progress_pct >= 50 else ("in-progress" if progress_pct >= 20 else "pending"),
+        "final-steps": "completed" if progress_pct >= 90 else ("in-progress" if progress_pct >= 70 else "pending"),
+        "train-loop-complete": "completed" if train_ended or progress_pct >= 100 else "pending",
+    }
+    for item in next_items:
+        key = str(item.get("key") or "")
+        status = status_by_key.get(key)
+        if status is not None:
+            item["status"] = status
+            if status == "completed" and item.get("completed_at") is None:
+                item["completed_at"] = _now()
+    return next_items
+
+
+def _training_progress_callback(run_id: str):
+    def _callback(payload: Mapping[str, Any]) -> None:
+        state = _get_state(run_id)
+        if state is None:
+            return
+
+        event = str(payload.get("event") or "")
+        progress_pct_raw = payload.get("progress_pct")
+        eta_seconds_raw = payload.get("eta_seconds")
+        progress_pct = float(progress_pct_raw) if isinstance(progress_pct_raw, (int, float)) else 0.0
+        if progress_pct < 0:
+            progress_pct = 0.0
+        if progress_pct > 100:
+            progress_pct = 100.0
+
+        eta_seconds = None
+        if isinstance(eta_seconds_raw, (int, float)):
+            eta_seconds = max(0.0, float(eta_seconds_raw))
+
+        submilestones = state.get("training_submilestones")
+        if not isinstance(submilestones, list):
+            submilestones = []
+        state["training_submilestones"] = _update_submilestones(
+            [item for item in submilestones if isinstance(item, Mapping)],
+            progress_pct=progress_pct,
+            train_started=event == "train_begin",
+            train_ended=event == "train_end",
+        )
+        state["training_progress_pct"] = progress_pct
+        state["training_eta_seconds"] = eta_seconds
+        state["updated_at"] = _now()
+        _store_state(run_id, state)
+
+    return _callback
+
+
 def _is_cancel_requested(run_id: str) -> bool:
     state = _get_state(run_id)
     return bool(state and state.get("cancel_requested"))
@@ -194,11 +269,11 @@ def _make_training_context(run_id: str, payload: Mapping[str, Any]) -> dict[str,
         "local_dataset_path": payload.get("local_dataset_path"),
         "local_dataset_format": payload.get("local_dataset_format"),
         "cancellation_checker": lambda: _is_cancel_requested(run_id),
+        "progress_callback": _training_progress_callback(run_id),
     }
 
 
-@app.function(image=image, timeout=60 * 60 * 8)
-def train_remote(run_id: str, payload: dict[str, Any]) -> None:
+def _execute_training(run_id: str, payload: dict[str, Any]) -> None:
     from worker.training.algorithms import TrainingCancelledError, TrainingExecutionContext, run_training_algorithm
 
     base_url = str(payload.get("base_url") or "").rstrip("/")
@@ -209,6 +284,7 @@ def train_remote(run_id: str, payload: dict[str, Any]) -> None:
     _append_log(run_id, "Training job started.")
     _append_log(run_id, f"Dataset: {payload.get('dataset')}")
     _append_log(run_id, f"Algorithm: {payload.get('training_algorithm')}")
+    _append_log(run_id, f"GPU class: {_resolve_gpu_class(payload)}")
 
     try:
         normalized = dict(payload)
@@ -221,6 +297,13 @@ def train_remote(run_id: str, payload: dict[str, Any]) -> None:
         _set_stage(run_id, "saving_artifacts", "Training finished. Saving artifacts and metrics.")
         metrics = dict(algorithm_result["metrics"])
         artifacts = dict(algorithm_result["artifacts"])
+        state_after_training = _get_state(run_id) or {}
+        if isinstance(state_after_training.get("training_submilestones"), list):
+            artifacts["modal_training_submilestones"] = state_after_training["training_submilestones"]
+        if isinstance(state_after_training.get("training_eta_seconds"), (int, float)):
+            artifacts["modal_training_eta_seconds"] = float(state_after_training["training_eta_seconds"])
+        if isinstance(state_after_training.get("training_progress_pct"), (int, float)):
+            artifacts["modal_training_progress_pct"] = float(state_after_training["training_progress_pct"])
         artifacts.update(_run_artifacts(base_url, run_id, normalized))
         _set_status(
             run_id,
@@ -230,6 +313,8 @@ def train_remote(run_id: str, payload: dict[str, Any]) -> None:
             artifacts=artifacts,
             finished_at=_now(),
             stage="completed",
+            training_eta_seconds=0.0,
+            training_progress_pct=100.0,
         )
         _append_log(run_id, "Training completed successfully.")
     except TrainingCancelledError:
@@ -247,6 +332,43 @@ def train_remote(run_id: str, payload: dict[str, Any]) -> None:
         )
         _append_log(run_id, f"Training failed: {type(err).__name__}: {err}")
         raise
+
+
+@app.function(image=image, timeout=60 * 60 * 8, gpu="T4")
+def train_remote_t4(run_id: str, payload: dict[str, Any]) -> None:
+    _execute_training(run_id=run_id, payload=payload)
+
+
+@app.function(image=image, timeout=60 * 60 * 8, gpu="A10G")
+def train_remote_a10g(run_id: str, payload: dict[str, Any]) -> None:
+    _execute_training(run_id=run_id, payload=payload)
+
+
+@app.function(image=image, timeout=60 * 60 * 8, gpu="A100")
+def train_remote_a100(run_id: str, payload: dict[str, Any]) -> None:
+    _execute_training(run_id=run_id, payload=payload)
+
+
+def _resolve_gpu_class(payload: Mapping[str, Any]) -> str:
+    orchestration = payload.get("orchestration")
+    if isinstance(orchestration, Mapping):
+        compute = orchestration.get("compute")
+        if isinstance(compute, Mapping):
+            gpu = compute.get("gpu")
+            if isinstance(gpu, str) and gpu.strip():
+                return gpu.strip().upper()
+    return "A10G"
+
+
+def _spawn_remote_training(run_id: str, payload: dict[str, Any]) -> None:
+    gpu_class = _resolve_gpu_class(payload)
+    if gpu_class == "A100":
+        train_remote_a100.spawn(run_id, payload)
+        return
+    if gpu_class == "T4":
+        train_remote_t4.spawn(run_id, payload)
+        return
+    train_remote_a10g.spawn(run_id, payload)
 
 
 async def _train(request: Any) -> Any:
@@ -274,7 +396,7 @@ async def _train(request: Any) -> Any:
     _store_state(run_id, _initial_state(payload["base_url"], run_id, payload))
 
     try:
-        train_remote.spawn(run_id, payload)
+        _spawn_remote_training(run_id, payload)
     except Exception as err:
         _set_status(run_id, "failed", f"Failed to spawn remote job: {type(err).__name__}")
         _append_log(run_id, f"Spawn failed: {type(err).__name__}: {err}")

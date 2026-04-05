@@ -6,17 +6,18 @@
 import logging
 from typing import Any, Optional
 
-from datasets import Dataset
 from peft import IA3Config, get_peft_model
-from transformers import AutoTokenizer, PreTrainedModel, Trainer, TrainingArguments
+from transformers import AutoTokenizer, PreTrainedModel
 
 from worker.training._base import get_device, resolve_output_dir, resolve_task, set_seed
 from worker.training._data import build_data_collator, ensure_padding_token, load_splits, tokenize_split
+from worker.training._trainer import build_trainer
 from worker.training.algorithms import (
     TrainingAlgorithmResult,
     TrainingCancelledError,
     TrainingExecutionContext,
     build_cancellation_callback,
+    build_progress_callback,
 )
 
 
@@ -29,40 +30,6 @@ def _load_adapter_model(model_name: str, task_type: str) -> tuple[Any, int]:
     trainable, total = model.get_nb_trainable_parameters()
     logging.info(f"Adapter tuning IA³ ({task_type}): {trainable:,} / {total:,} parameters trainable")
     return model, trainable
-
-
-def _build_trainer(
-    model: Any,
-    train_ds: Dataset,
-    eval_ds: Optional[Dataset],
-    output_dir: str,
-    data_collator: Any,
-    epochs: int,
-    batch_size: int,
-    learning_rate: float,
-    seed: int,
-    callbacks: Optional[list[Any]],
-) -> Trainer:
-    args = TrainingArguments(
-        output_dir=output_dir,
-        num_train_epochs=epochs,
-        per_device_train_batch_size=batch_size,
-        learning_rate=learning_rate,
-        seed=seed,
-        eval_strategy="epoch" if eval_ds else "no",
-        save_strategy="epoch",
-        load_best_model_at_end=eval_ds is not None,
-        logging_steps=50,
-        report_to="none",
-    )
-    return Trainer(
-        model=model,
-        args=args,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        data_collator=data_collator,
-        callbacks=callbacks,
-    )
 
 
 def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
@@ -94,7 +61,9 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
     eval_ds = tokenize_split(splits[context["eval_split"]], tokenizer, task_type) if context["eval_split"] else None
 
     cancellation_callback = build_cancellation_callback(context)
-    trainer = _build_trainer(
+    progress_callback = build_progress_callback(context)
+    callbacks = [callback for callback in (cancellation_callback, progress_callback) if callback is not None]
+    trainer = build_trainer(
         model=model,
         train_ds=train_ds,
         eval_ds=eval_ds,
@@ -104,7 +73,7 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
         batch_size=context["batch_size"],
         learning_rate=context["learning_rate"],
         seed=context["seed"] or 42,
-        callbacks=[cancellation_callback] if cancellation_callback else None,
+        callbacks=callbacks or None,
     )
     train_result = trainer.train()
     if cancellation_callback and cancellation_callback.cancelled:

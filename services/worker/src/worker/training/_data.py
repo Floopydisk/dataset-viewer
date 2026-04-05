@@ -144,6 +144,7 @@ def ensure_padding_token(tokenizer: object) -> None:
             "Tokenizer has no pad_token_id and no eos_token. "
             "Please provide a tokenizer with a valid padding token."
         )
+    logging.warning("Tokenizer has no pad_token_id; falling back to eos_token for padding.")
     tokenizer.pad_token = eos_token  # type: ignore[attr-defined]
 
 
@@ -211,7 +212,7 @@ def tokenize_split(dataset: Dataset, tokenizer: object, task_type: str) -> Datas
             tokenized["labels"] = labels
             return tokenized
 
-    elif task_type == "seq2seq":
+    elif task_type in {"seq2seq", "summarization"}:
         input_col, target_col = resolve_seq2seq_columns(dataset)
 
         def _tok(batch: dict[str, object]) -> dict[str, object]:

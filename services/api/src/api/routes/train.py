@@ -58,11 +58,16 @@ def _extract_modal_metadata(source: Mapping[str, Any]) -> dict[str, Any]:
         "modal_remote_status",
         "modal_remote_message",
         "modal_remote_stage",
+        "modal_training_eta_seconds",
+        "modal_training_progress_pct",
+        "modal_training_submilestones",
         "modal_remote_updated_at",
         "modal_remote_finished_at",
         "structured_model_path",
         "execution_backend",
         "modal_auto_shutdown",
+        "modal_gpu",
+        "modal_gpu_count",
     )
     modal = {field: source[field] for field in modal_fields if field in source and source[field] is not None}
     return modal

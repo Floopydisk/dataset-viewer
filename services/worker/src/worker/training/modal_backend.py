@@ -18,6 +18,52 @@ TERMINAL_CANCELLED_STATES = {"cancelled", "canceled"}
 TERMINAL_FAILED_STATES = {"failed", "error"}
 
 
+def _normalize_model_name(value: str) -> str:
+    return value.strip().lower()
+
+
+def _select_gpu_instance_class(context: TrainingExecutionContext, training_algorithm: str) -> str:
+    algorithm = training_algorithm.strip().lower()
+    model_name = _normalize_model_name(context["model_name"])
+    task_type = str(context.get("task_type") or "").strip().lower()
+    batch_size = int(context.get("batch_size") or 1)
+    epochs = int(context.get("epochs") or 1)
+
+    # Heavier fine-tuning workloads benefit from larger GPU memory/throughput.
+    high_memory_model_markers = (
+        "llama",
+        "mistral",
+        "mixtral",
+        "falcon",
+        "bloom",
+        "gpt-j",
+        "gpt-neox",
+        "qwen",
+        "gemma",
+    )
+    is_high_memory_model = any(marker in model_name for marker in high_memory_model_markers)
+
+    if algorithm == "qlora" or (algorithm == "full-finetune" and (is_high_memory_model or batch_size >= 64)):
+        return "A100"
+
+    if algorithm in {"full-finetune", "lora"}:
+        return "A10G"
+
+    if task_type in {"causal-lm", "seq2seq", "summarization"} and (batch_size >= 32 or epochs >= 10):
+        return "A10G"
+
+    return "T4"
+
+
+def _build_compute_profile(context: TrainingExecutionContext, training_algorithm: str) -> dict[str, Any]:
+    gpu_instance_class = _select_gpu_instance_class(context=context, training_algorithm=training_algorithm)
+    return {
+        "provider": "nvidia",
+        "gpu": gpu_instance_class,
+        "gpu_count": 1,
+    }
+
+
 def _render_url_template(url_template: str, run_id: str) -> str:
     return url_template.replace("{run_id}", run_id)
 
@@ -137,6 +183,7 @@ def run_training_on_modal(
         experiment_name=context.get("experiment_name"),
         job_id=context["job_id"],
     )
+    compute_profile = _build_compute_profile(context=context, training_algorithm=training_algorithm)
 
     payload = {
         "job_id": context["job_id"],
@@ -161,6 +208,7 @@ def run_training_on_modal(
             "provider": "modal",
             "execution_mode": "ephemeral",
             "auto_shutdown": True,
+            "compute": compute_profile,
         },
         "storage": {
             "kind": "s3",
@@ -185,6 +233,8 @@ def run_training_on_modal(
         "structured_model_path": structured_model_path,
         "execution_backend": "modal",
         "modal_auto_shutdown": True,
+        "modal_gpu": compute_profile["gpu"],
+        "modal_gpu_count": compute_profile["gpu_count"],
     }
     if run_id:
         runtime_metadata["modal_run_id"] = run_id
@@ -236,6 +286,15 @@ def run_training_on_modal(
                 stage = result.get("stage")
                 if isinstance(stage, str) and stage:
                     runtime_snapshot["modal_remote_stage"] = stage
+                eta_seconds = result.get("training_eta_seconds")
+                if isinstance(eta_seconds, (int, float)):
+                    runtime_snapshot["modal_training_eta_seconds"] = float(eta_seconds)
+                progress_pct = result.get("training_progress_pct")
+                if isinstance(progress_pct, (int, float)):
+                    runtime_snapshot["modal_training_progress_pct"] = float(progress_pct)
+                submilestones = result.get("training_submilestones")
+                if isinstance(submilestones, list):
+                    runtime_snapshot["modal_training_submilestones"] = submilestones
 
                 if runtime_snapshot != last_runtime_snapshot:
                     Queue().update_job_params_dict(context["job_id"], runtime_snapshot)
@@ -296,6 +355,15 @@ def run_training_on_modal(
                 stage = result.get("stage")
                 if isinstance(stage, str) and stage:
                     runtime_snapshot["modal_remote_stage"] = stage
+                eta_seconds = result.get("training_eta_seconds")
+                if isinstance(eta_seconds, (int, float)):
+                    runtime_snapshot["modal_training_eta_seconds"] = float(eta_seconds)
+                progress_pct = result.get("training_progress_pct")
+                if isinstance(progress_pct, (int, float)):
+                    runtime_snapshot["modal_training_progress_pct"] = float(progress_pct)
+                submilestones = result.get("training_submilestones")
+                if isinstance(submilestones, list):
+                    runtime_snapshot["modal_training_submilestones"] = submilestones
 
                 if runtime_snapshot != last_runtime_snapshot:
                     Queue().update_job_params_dict(context["job_id"], runtime_snapshot)
@@ -326,11 +394,19 @@ def run_training_on_modal(
     artifacts.setdefault("structured_model_path", structured_model_path)
     artifacts.setdefault("execution_backend", "modal")
     artifacts.setdefault("modal_auto_shutdown", True)
+    artifacts.setdefault("modal_gpu", compute_profile["gpu"])
+    artifacts.setdefault("modal_gpu_count", compute_profile["gpu_count"])
     artifacts.setdefault("modal_remote_status", status or "unknown")
     if isinstance(result.get("message"), str):
         artifacts.setdefault("modal_remote_message", str(result["message"]))
     if isinstance(result.get("stage"), str):
         artifacts.setdefault("modal_remote_stage", str(result["stage"]))
+    if isinstance(result.get("training_eta_seconds"), (int, float)):
+        artifacts.setdefault("modal_training_eta_seconds", float(result["training_eta_seconds"]))
+    if isinstance(result.get("training_progress_pct"), (int, float)):
+        artifacts.setdefault("modal_training_progress_pct", float(result["training_progress_pct"]))
+    if isinstance(result.get("training_submilestones"), list):
+        artifacts.setdefault("modal_training_submilestones", result["training_submilestones"])
     if isinstance(result.get("updated_at"), str):
         artifacts.setdefault("modal_remote_updated_at", str(result["updated_at"]))
     if isinstance(result.get("finished_at"), str):
