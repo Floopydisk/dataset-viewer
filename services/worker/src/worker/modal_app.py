@@ -15,8 +15,7 @@ import modal
 
 ROOT_DIR = Path(__file__).resolve().parents[4]
 WORKER_SRC_DIR = ROOT_DIR / "services" / "worker" / "src"
-LIBCOMMON_SRC_DIR = ROOT_DIR / "libs" / "libcommon" / "src"
-for source_dir in (str(WORKER_SRC_DIR), str(LIBCOMMON_SRC_DIR)):
+for source_dir in (str(WORKER_SRC_DIR),):
     if source_dir not in sys.path:
         sys.path.insert(0, source_dir)
 
@@ -26,13 +25,17 @@ WEBHOOK_TOKEN_ENV_VAR = "WEBHOOK_TOKEN"
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .poetry_install_from_file(
-        poetry_pyproject_toml=str(ROOT_DIR / "services" / "worker" / "pyproject.toml"),
-        poetry_lockfile=str(ROOT_DIR / "services" / "worker" / "poetry.lock"),
+    .pip_install(
+        "starlette==0.37.1",
+        "numpy",
+        "transformers==4.41.0",
+        "accelerate>=1.13.0",
+        "peft==0.11.0",
+        "datasets",
+        "torch",
     )
     .add_local_dir(str(WORKER_SRC_DIR), remote_path="/root/services/worker/src")
-    .add_local_dir(str(LIBCOMMON_SRC_DIR), remote_path="/root/libs/libcommon/src")
-    .env({"PYTHONPATH": "/root/services/worker/src:/root/libs/libcommon/src"})
+    .env({"PYTHONPATH": "/root/services/worker/src"})
 )
 
 app = modal.App("dataset-viewer-training")
@@ -57,15 +60,22 @@ def _require_webhook_token(request: Any) -> None:
 
 
 def _structured_model_path(payload: Mapping[str, Any]) -> str:
-    from worker.training.modal_backend import build_structured_model_path
+    def _slugify(value: str) -> str:
+        return value.strip().replace("/", "--").replace(" ", "-")
 
-    return build_structured_model_path(
-        output_root=str(payload.get("output_root") or "models"),
-        dataset=str(payload["dataset"]),
-        revision=str(payload["revision"]),
-        training_algorithm=str(payload.get("training_algorithm") or "full-finetune"),
-        experiment_name=payload.get("experiment_name") if payload.get("experiment_name") is not None else None,
-        job_id=str(payload["job_id"]),
+    output_root = str(payload.get("output_root") or "models")
+    dataset = str(payload["dataset"])
+    revision = str(payload["revision"])
+    training_algorithm = str(payload.get("training_algorithm") or "full-finetune")
+    experiment_name = payload.get("experiment_name")
+    experiment_segment = _slugify(str(experiment_name)) if experiment_name else "default"
+    job_id = str(payload["job_id"])
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    return (
+        f"{output_root.rstrip('/')}/dataset/{_slugify(dataset)}/revision/{_slugify(revision)}/"
+        f"algorithm/{_slugify(training_algorithm)}/experiment/{experiment_segment}/"
+        f"job/{_slugify(job_id)}/{timestamp}"
     )
 
 
@@ -160,7 +170,6 @@ def _make_training_context(run_id: str, payload: Mapping[str, Any]) -> dict[str,
 
 @app.function(image=image, timeout=60 * 60 * 8)
 def train_remote(run_id: str, payload: dict[str, Any]) -> None:
-    from libcommon.train import normalize_training_params  # type: ignore[import-not-found]
     from worker.training.algorithms import TrainingCancelledError, TrainingExecutionContext, run_training_algorithm
 
     base_url = str(payload.get("base_url") or "").rstrip("/")
@@ -173,9 +182,9 @@ def train_remote(run_id: str, payload: dict[str, Any]) -> None:
     _append_log(run_id, f"Algorithm: {payload.get('training_algorithm')}")
 
     try:
-        normalized = normalize_training_params(payload, strict=False)
+        normalized = dict(payload)
         context = cast(TrainingExecutionContext, _make_training_context(run_id, normalized))
-        training_algorithm = normalized["training_algorithm"] or "full-finetune"
+        training_algorithm = str(normalized.get("training_algorithm") or "full-finetune")
         _append_log(run_id, f"Structured model path: {_structured_model_path(normalized)}")
         algorithm_result = run_training_algorithm(name=training_algorithm, context=context)
         metrics = dict(algorithm_result["metrics"])
