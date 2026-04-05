@@ -56,8 +56,8 @@ image = (
         "peft==0.11.0",
         "datasets",
         "bitsandbytes",
-        "https://download.pytorch.org/whl/cu121/torch-2.8.0%2Bcu121-cp312-cp312-manylinux_2_28_x86_64.whl",
     )
+    .run_commands("python -m pip install --index-url https://download.pytorch.org/whl/cu128 torch==2.7.0+cu128")
     .env({"PYTHONPATH": "/root/services/worker/src"})
     .add_local_dir(str(WORKER_SRC_DIR), remote_path="/root/services/worker/src")
 )
