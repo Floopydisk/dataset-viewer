@@ -12,6 +12,7 @@ from worker.config import AppConfig
 from worker.dtos import CompleteJobResult, JobResult
 from worker.job_runners.dataset.dataset_job_runner import DatasetJobRunner
 from worker.training.algorithms import TrainingCancelledError, TrainingExecutionContext, run_training_algorithm
+from worker.training.modal_backend import build_structured_model_path, run_training_on_modal
 
 
 class DatasetTrainJobRunner(DatasetJobRunner):
@@ -45,6 +46,16 @@ class DatasetTrainJobRunner(DatasetJobRunner):
             "accuracy": 0.85 + (epochs * 0.01),
             "loss": 0.1 / epochs,
         }
+
+    def _default_structured_model_path(self, training_algorithm: Optional[str]) -> str:
+        return build_structured_model_path(
+            output_root=self.app_config.modal_training.model_output_root,
+            dataset=self.dataset,
+            revision=self.dataset_git_revision,
+            training_algorithm=training_algorithm or "default",
+            experiment_name=None,
+            job_id=self.job_info["job_id"],
+        )
 
     def compute(self) -> JobResult:
         self._log_training_context(f"compute {self.get_job_type()}")
@@ -97,9 +108,18 @@ class DatasetTrainJobRunner(DatasetJobRunner):
 
         if training_algorithm:
             try:
-                algorithm_result = run_training_algorithm(name=training_algorithm, context=context)
+                if self.app_config.modal_training.execution_backend == "modal":
+                    algorithm_result = run_training_on_modal(
+                        context=context,
+                        modal_config=self.app_config.modal_training,
+                        training_algorithm=training_algorithm,
+                    )
+                else:
+                    algorithm_result = run_training_algorithm(name=training_algorithm, context=context)
                 metrics = dict(algorithm_result["metrics"])
                 artifacts = dict(algorithm_result["artifacts"])
+                artifacts.setdefault("structured_model_path", self._default_structured_model_path(training_algorithm))
+                artifacts.setdefault("execution_backend", self.app_config.modal_training.execution_backend)
                 result_status = "success"
                 result_message = f"Training job completed for {self.dataset}"
             except TrainingCancelledError:
@@ -116,6 +136,8 @@ class DatasetTrainJobRunner(DatasetJobRunner):
                 seed=seed,
             )
             artifacts = {}
+            artifacts.setdefault("structured_model_path", self._default_structured_model_path(training_algorithm))
+            artifacts.setdefault("execution_backend", "local")
             result_status = "success"
             result_message = f"Training job completed for {self.dataset}"
 

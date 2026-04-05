@@ -3,7 +3,8 @@
 
 import logging
 from http import HTTPStatus
-from typing import Optional
+from collections.abc import Mapping
+from typing import Any, Optional
 
 from mongoengine.errors import DoesNotExist
 
@@ -38,6 +39,19 @@ def _parse_local_dataset_reference(dataset: str) -> tuple[str, str]:
     if not namespace or not dataset_id:
         raise ValueError("Invalid local dataset reference")
     return namespace, dataset_id
+
+
+def _extract_modal_metadata(source: Mapping[str, Any]) -> dict[str, Any]:
+    modal_fields = (
+        "modal_run_id",
+        "modal_status_url",
+        "modal_logs_url",
+        "structured_model_path",
+        "execution_backend",
+        "modal_auto_shutdown",
+    )
+    modal = {field: source[field] for field in modal_fields if field in source and source[field] is not None}
+    return modal
 
 
 def create_train_capabilities_endpoint() -> Endpoint:
@@ -200,12 +214,14 @@ def create_train_endpoint(
                                 )
 
                             state = "running" if job.status.value == "started" else "queued"
+                            modal = _extract_modal_metadata(job.params_dict)
                             return get_json_ok_response(
                                 {
                                     "status": state,
                                     "job_id": str(job.pk),
                                     "dataset": dataset,
                                     "queue_status": job.status.value,
+                                    **({"modal": modal} if modal else {}),
                                 },
                                 max_age=0,
                             )
@@ -226,21 +242,25 @@ def create_train_endpoint(
                             storage_clients=storage_clients,
                         )
                         if result["http_status"] != HTTPStatus.OK:
+                            modal = _extract_modal_metadata(result["content"] if isinstance(result["content"], Mapping) else {})
                             return get_json_error_response(
                                 content={
                                     "status": "failed",
                                     "dataset": dataset,
                                     "error_code": result["error_code"],
                                     "result": result["content"],
+                                    **({"modal": modal} if modal else {}),
                                 },
                                 status_code=result["http_status"],
                                 revision=result["dataset_git_revision"],
                             )
+                        modal = _extract_modal_metadata(result["content"] if isinstance(result["content"], Mapping) else {})
                         return get_json_ok_response(
                             content={
                                 "status": "succeeded",
                                 "dataset": dataset,
                                 "result": result["content"],
+                                **({"modal": modal} if modal else {}),
                             },
                             max_age=0,
                             revision=result["dataset_git_revision"],

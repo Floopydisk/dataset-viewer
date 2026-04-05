@@ -435,6 +435,20 @@ class Queue:
         except DoesNotExist:
             return False
 
+    def update_job_params_dict(self, job_id: str, params_dict: Mapping[str, Any]) -> bool:
+        """Update a job's params_dict in place.
+
+        This is used for runtime metadata such as remote execution identifiers and artifact URLs.
+        """
+        if not params_dict:
+            return False
+        try:
+            update_kwargs = {f"set__params_dict__{key}": value for key, value in params_dict.items()}
+            updated = JobDocument.objects(pk=job_id).update(**update_kwargs)
+            return updated > 0
+        except Exception:
+            return False
+
     def _get_next_waiting_job_for_priority(
         self,
         priority: Priority,

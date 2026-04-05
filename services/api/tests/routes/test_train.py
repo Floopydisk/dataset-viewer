@@ -135,6 +135,41 @@ def test_train_get_returns_succeeded_when_cache_is_available(client: TestClient)
     assert payload["result"] == {"status": "success", "accuracy": 0.91}
 
 
+def test_train_get_returns_modal_metadata_when_cache_has_artifacts(client: TestClient) -> None:
+    upsert_response(
+        kind="dataset-train",
+        dataset="org/dataset",
+        dataset_git_revision="main",
+        content={
+            "status": "success",
+            "metrics": {"accuracy": 0.91},
+            "artifacts": {
+                "modal_run_id": "run-abc",
+                "modal_status_url": "https://modal.example.com/runs/run-abc",
+                "modal_logs_url": "https://modal.example.com/runs/run-abc/logs",
+                "structured_model_path": "models/dataset/org--dataset/revision/main/algorithm/lora/experiment/default/job/job-123/20260405T000000Z",
+                "execution_backend": "modal",
+                "modal_auto_shutdown": True,
+            },
+        },
+        http_status=200,
+    )
+
+    response = client.get("/train", params={"dataset": "org/dataset"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "succeeded"
+    assert payload["modal"] == {
+        "modal_run_id": "run-abc",
+        "modal_status_url": "https://modal.example.com/runs/run-abc",
+        "modal_logs_url": "https://modal.example.com/runs/run-abc/logs",
+        "structured_model_path": "models/dataset/org--dataset/revision/main/algorithm/lora/experiment/default/job/job-123/20260405T000000Z",
+        "execution_backend": "modal",
+        "modal_auto_shutdown": True,
+    }
+
+
 def test_train_get_returns_failed_when_cache_is_an_error(client: TestClient) -> None:
     upsert_response(
         kind="dataset-train",

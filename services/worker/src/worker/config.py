@@ -51,6 +51,15 @@ WORKER_MAX_MEMORY_PCT = 80
 WORKER_MAX_MISSING_HEARTBEATS = 5
 WORKER_SLEEP_SECONDS = 15
 WORKER_STATE_FILE_PATH = None
+TRAINING_EXECUTION_BACKEND = "local"
+MODAL_TRAINING_WEBHOOK_URL = None
+MODAL_TRAINING_WEBHOOK_TOKEN = None
+MODAL_TRAINING_REQUEST_TIMEOUT_SECONDS = 60 * 60
+MODAL_TRAINING_MODEL_OUTPUT_ROOT = "models"
+MODAL_TRAINING_STATUS_URL_TEMPLATE = None
+MODAL_TRAINING_CANCEL_URL_TEMPLATE = None
+MODAL_TRAINING_LOGS_URL_TEMPLATE = None
+MODAL_TRAINING_POLL_INTERVAL_SECONDS = 5
 
 
 @dataclass(frozen=True)
@@ -99,6 +108,44 @@ class WorkerConfig:
                 state_file_path=env.str(
                     name="STATE_FILE_PATH", default=WORKER_STATE_FILE_PATH
                 ),  # this environment variable is not expected to be set explicitly, it's set by the worker executor
+            )
+
+
+@dataclass(frozen=True)
+class ModalTrainingConfig:
+    execution_backend: str = TRAINING_EXECUTION_BACKEND
+    webhook_url: Optional[str] = MODAL_TRAINING_WEBHOOK_URL
+    webhook_token: Optional[str] = MODAL_TRAINING_WEBHOOK_TOKEN
+    request_timeout_seconds: int = MODAL_TRAINING_REQUEST_TIMEOUT_SECONDS
+    model_output_root: str = MODAL_TRAINING_MODEL_OUTPUT_ROOT
+    status_url_template: Optional[str] = MODAL_TRAINING_STATUS_URL_TEMPLATE
+    cancel_url_template: Optional[str] = MODAL_TRAINING_CANCEL_URL_TEMPLATE
+    logs_url_template: Optional[str] = MODAL_TRAINING_LOGS_URL_TEMPLATE
+    poll_interval_seconds: int = MODAL_TRAINING_POLL_INTERVAL_SECONDS
+
+    @classmethod
+    def from_env(cls) -> "ModalTrainingConfig":
+        env = Env(expand_vars=True)
+        execution_backend = env.str(name="TRAINING_EXECUTION_BACKEND", default=TRAINING_EXECUTION_BACKEND)
+        if execution_backend not in {"local", "modal"}:
+            raise ValueError("TRAINING_EXECUTION_BACKEND must be one of: local, modal")
+        with env.prefixed("MODAL_TRAINING_"):
+            return cls(
+                execution_backend=execution_backend,
+                webhook_url=env.str(name="WEBHOOK_URL", default=MODAL_TRAINING_WEBHOOK_URL),
+                webhook_token=env.str(name="WEBHOOK_TOKEN", default=MODAL_TRAINING_WEBHOOK_TOKEN),
+                request_timeout_seconds=env.int(
+                    name="REQUEST_TIMEOUT_SECONDS",
+                    default=MODAL_TRAINING_REQUEST_TIMEOUT_SECONDS,
+                ),
+                model_output_root=env.str(name="MODEL_OUTPUT_ROOT", default=MODAL_TRAINING_MODEL_OUTPUT_ROOT),
+                status_url_template=env.str(name="STATUS_URL_TEMPLATE", default=MODAL_TRAINING_STATUS_URL_TEMPLATE),
+                cancel_url_template=env.str(name="CANCEL_URL_TEMPLATE", default=MODAL_TRAINING_CANCEL_URL_TEMPLATE),
+                logs_url_template=env.str(name="LOGS_URL_TEMPLATE", default=MODAL_TRAINING_LOGS_URL_TEMPLATE),
+                poll_interval_seconds=env.int(
+                    name="POLL_INTERVAL_SECONDS",
+                    default=MODAL_TRAINING_POLL_INTERVAL_SECONDS,
+                ),
             )
 
 
@@ -347,6 +394,7 @@ class AppConfig:
     s3: S3Config = field(default_factory=S3Config)
     split_names: SplitNamesConfig = field(default_factory=SplitNamesConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
+    modal_training: ModalTrainingConfig = field(default_factory=ModalTrainingConfig)
     urls_scan: OptInOutUrlsScanConfig = field(default_factory=OptInOutUrlsScanConfig)
     presidio_scan: PresidioEntitiesScanConfig = field(default_factory=PresidioEntitiesScanConfig)
     parquet_metadata: ParquetMetadataConfig = field(default_factory=ParquetMetadataConfig)
@@ -370,6 +418,7 @@ class AppConfig:
             s3=S3Config.from_env(),
             split_names=SplitNamesConfig.from_env(),
             worker=WorkerConfig.from_env(),
+            modal_training=ModalTrainingConfig.from_env(),
             urls_scan=OptInOutUrlsScanConfig.from_env(),
             presidio_scan=PresidioEntitiesScanConfig.from_env(),
             parquet_metadata=ParquetMetadataConfig.from_env(),

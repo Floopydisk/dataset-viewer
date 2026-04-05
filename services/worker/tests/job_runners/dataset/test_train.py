@@ -2,6 +2,7 @@
 # Copyright 2022 The HuggingFace Authors.
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -96,3 +97,50 @@ def test_compute_raises_for_unsupported_training_algorithm(app_config: AppConfig
 
     with pytest.raises(ValueError, match="Unsupported training algorithm"):
         job_runner.compute()
+
+
+def test_compute_uses_modal_backend_when_enabled(monkeypatch: pytest.MonkeyPatch, app_config: AppConfig) -> None:
+    app_config_modal = replace(
+        app_config,
+        modal_training=replace(
+            app_config.modal_training,
+            execution_backend="modal",
+            webhook_url="https://modal.example.com/train",
+            model_output_root="models",
+        ),
+    )
+    job_runner = _get_job_runner(
+        app_config=app_config_modal,
+        params_dict={
+            "modelName": "bert-base-uncased",
+            "trainingAlgorithm": "lora",
+        },
+    )
+
+    def _mock_run_training_on_modal(*args: Any, **kwargs: Any) -> Mapping[str, Any]:
+        return {
+            "metrics": {"accuracy": 0.9},
+            "artifacts": {
+                "modal_job_id": "mo-123",
+                "modal_run_id": "run-abc",
+                "modal_status_url": "https://modal.example.com/status/run-abc",
+                "modal_logs_url": "https://modal.example.com/logs/run-abc",
+            },
+        }
+
+    monkeypatch.setattr("worker.job_runners.dataset.train.run_training_on_modal", _mock_run_training_on_modal)
+
+    response = job_runner.compute()
+
+    assert response.content["status"] == "success"
+    assert response.content["metrics"]["accuracy"] == 0.9
+    assert response.content["artifacts"]["modal_job_id"] == "mo-123"
+    assert response.content["artifacts"]["modal_run_id"] == "run-abc"
+    assert response.content["artifacts"]["modal_status_url"].endswith("run-abc")
+    assert response.content["artifacts"]["modal_logs_url"].endswith("run-abc")
+    assert response.content["artifacts"]["execution_backend"] == "modal"
+    assert "structured_model_path" in response.content["artifacts"]
+    structured_path = response.content["artifacts"]["structured_model_path"]
+    assert "dataset/org--dataset" in structured_path
+    assert "algorithm/lora" in structured_path
+    assert "job/job_id" in structured_path
