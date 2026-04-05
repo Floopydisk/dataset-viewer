@@ -13,8 +13,29 @@ from typing import Any, cast
 
 import modal
 
-ROOT_DIR = Path(__file__).resolve().parents[4]
-WORKER_SRC_DIR = ROOT_DIR / "services" / "worker" / "src"
+def _resolve_worker_src_dir() -> Path:
+    configured = os.environ.get("WORKER_SRC_DIR")
+    if configured:
+        configured_path = Path(configured).resolve()
+        if configured_path.exists():
+            return configured_path
+
+    current_file = Path(__file__).resolve()
+    search_roots = [current_file.parent, *list(current_file.parents)]
+    for root in search_roots:
+        candidate = (root / "services" / "worker" / "src").resolve()
+        if candidate.exists():
+            return candidate
+
+    # Modal runtime fallback when file is imported from /root/modal_app.py.
+    modal_fallback = Path("/root/services/worker/src")
+    if modal_fallback.exists():
+        return modal_fallback
+
+    raise RuntimeError("Unable to locate services/worker/src for modal training runtime.")
+
+
+WORKER_SRC_DIR = _resolve_worker_src_dir()
 for source_dir in (str(WORKER_SRC_DIR),):
     if source_dir not in sys.path:
         sys.path.insert(0, source_dir)
