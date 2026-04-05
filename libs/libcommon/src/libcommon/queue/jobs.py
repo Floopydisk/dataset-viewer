@@ -20,7 +20,7 @@ import pyarrow as pa
 import pytz
 from mongoengine import Document
 from mongoengine.errors import DoesNotExist
-from mongoengine.fields import DateTimeField, DictField, EnumField, IntField, StringField
+from mongoengine.fields import BoolField, DateTimeField, DictField, EnumField, IntField, StringField
 from mongoengine.queryset.queryset import QuerySet
 from pymongoarrow.api import Schema, find_pandas_all
 
@@ -77,6 +77,7 @@ class JobDict(TypedDict):
     namespace: str
     priority: str
     status: str
+    cancel_requested: bool
     difficulty: int
     created_at: datetime
     started_at: Optional[datetime]
@@ -193,6 +194,7 @@ class JobDocument(Document):
     namespace = StringField(required=True)
     priority = EnumField(Priority, default=Priority.LOW)
     status = EnumField(Status, default=Status.WAITING)
+    cancel_requested = BoolField(default=False)
     difficulty = IntField(required=True)
     created_at = DateTimeField(required=True)
     started_at = DateTimeField()
@@ -209,6 +211,7 @@ class JobDocument(Document):
             "namespace": self.namespace,
             "priority": self.priority.value,
             "status": self.status.value,
+            "cancel_requested": self.cancel_requested,
             "difficulty": self.difficulty,
             "created_at": self.created_at,
             "started_at": self.started_at,
@@ -405,6 +408,32 @@ class Queue:
             return 0 if deleted_jobs is None else deleted_jobs
         except Exception:
             return 0
+
+    def request_job_cancellation(self, job_id: str) -> bool:
+        """Request cancellation for a started job.
+
+        The cancellation is cooperative: the worker checks this flag while running
+        and stops training gracefully when requested.
+        """
+        try:
+            job = JobDocument.objects(pk=job_id).get()
+        except DoesNotExist:
+            return False
+
+        if job.status != Status.STARTED:
+            return False
+
+        job.cancel_requested = True
+        job.save()
+        return True
+
+    def is_job_cancellation_requested(self, job_id: str) -> bool:
+        """Check whether cancellation has been requested for a started job."""
+        try:
+            job = JobDocument.objects(pk=job_id).only("cancel_requested").get()
+            return bool(job.cancel_requested)
+        except DoesNotExist:
+            return False
 
     def _get_next_waiting_job_for_priority(
         self,

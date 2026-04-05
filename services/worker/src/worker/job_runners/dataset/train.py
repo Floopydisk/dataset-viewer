@@ -5,12 +5,13 @@ import logging
 import time
 from typing import Any, Mapping, Optional
 
+from libcommon.queue.jobs import Queue
 from libcommon.train import normalize_training_params
 
 from worker.config import AppConfig
 from worker.dtos import CompleteJobResult, JobResult
 from worker.job_runners.dataset.dataset_job_runner import DatasetJobRunner
-from worker.training.algorithms import TrainingExecutionContext, run_training_algorithm
+from worker.training.algorithms import TrainingCancelledError, TrainingExecutionContext, run_training_algorithm
 
 
 class DatasetTrainJobRunner(DatasetJobRunner):
@@ -76,6 +77,7 @@ class DatasetTrainJobRunner(DatasetJobRunner):
         )
 
         context: TrainingExecutionContext = {
+            "job_id": self.job_info["job_id"],
             "dataset": self.dataset,
             "revision": self.dataset_git_revision,
             "model_name": model_name,
@@ -90,12 +92,21 @@ class DatasetTrainJobRunner(DatasetJobRunner):
             "experiment_name": experiment_name,
             "local_dataset_path": local_dataset_path,
             "local_dataset_format": local_dataset_format,
+            "cancellation_checker": lambda: Queue().is_job_cancellation_requested(self.job_info["job_id"]),
         }
 
         if training_algorithm:
-            algorithm_result = run_training_algorithm(name=training_algorithm, context=context)
-            metrics = dict(algorithm_result["metrics"])
-            artifacts = dict(algorithm_result["artifacts"])
+            try:
+                algorithm_result = run_training_algorithm(name=training_algorithm, context=context)
+                metrics = dict(algorithm_result["metrics"])
+                artifacts = dict(algorithm_result["artifacts"])
+                result_status = "success"
+                result_message = f"Training job completed for {self.dataset}"
+            except TrainingCancelledError:
+                metrics = {}
+                artifacts = {}
+                result_status = "cancelled"
+                result_message = f"Training job was cancelled for {self.dataset}"
         else:
             metrics = self._run_training(
                 model_name=model_name,
@@ -105,11 +116,13 @@ class DatasetTrainJobRunner(DatasetJobRunner):
                 seed=seed,
             )
             artifacts = {}
+            result_status = "success"
+            result_message = f"Training job completed for {self.dataset}"
 
         return CompleteJobResult(
             content={
-                "status": "success",
-                "message": f"Training job completed for {self.dataset}",
+                "status": result_status,
+                "message": result_message,
                 "model_name": model_name,
                 "task_type": task_type,
                 "training_algorithm": training_algorithm,

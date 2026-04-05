@@ -12,7 +12,12 @@ from transformers import AutoTokenizer, PreTrainedModel, Trainer, TrainingArgume
 
 from worker.training._base import get_device, resolve_output_dir, resolve_task, set_seed
 from worker.training._data import build_data_collator, ensure_padding_token, load_splits, tokenize_split
-from worker.training.algorithms import TrainingAlgorithmResult, TrainingExecutionContext
+from worker.training.algorithms import (
+    TrainingAlgorithmResult,
+    TrainingCancelledError,
+    TrainingExecutionContext,
+    build_cancellation_callback,
+)
 
 
 def _load_adapter_model(model_name: str, task_type: str) -> tuple[Any, int]:
@@ -36,6 +41,7 @@ def _build_trainer(
     batch_size: int,
     learning_rate: float,
     seed: int,
+    callbacks: Optional[list[Any]],
 ) -> Trainer:
     args = TrainingArguments(
         output_dir=output_dir,
@@ -49,7 +55,14 @@ def _build_trainer(
         logging_steps=50,
         report_to="none",
     )
-    return Trainer(model=model, args=args, train_dataset=train_ds, eval_dataset=eval_ds, data_collator=data_collator)
+    return Trainer(
+        model=model,
+        args=args,
+        train_dataset=train_ds,
+        eval_dataset=eval_ds,
+        data_collator=data_collator,
+        callbacks=callbacks,
+    )
 
 
 def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
@@ -80,6 +93,7 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
     train_ds = tokenize_split(splits[context["train_split"]], tokenizer, task_type)
     eval_ds = tokenize_split(splits[context["eval_split"]], tokenizer, task_type) if context["eval_split"] else None
 
+    cancellation_callback = build_cancellation_callback(context)
     trainer = _build_trainer(
         model=model,
         train_ds=train_ds,
@@ -90,8 +104,11 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
         batch_size=context["batch_size"],
         learning_rate=context["learning_rate"],
         seed=context["seed"] or 42,
+        callbacks=[cancellation_callback] if cancellation_callback else None,
     )
     train_result = trainer.train()
+    if cancellation_callback and cancellation_callback.cancelled:
+        raise TrainingCancelledError(f"Training cancelled for job {context['job_id']}")
     trainer.save_model(output_dir)
 
     metrics: dict[str, float] = {"train_loss": train_result.training_loss}

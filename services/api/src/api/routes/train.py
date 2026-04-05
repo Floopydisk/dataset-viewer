@@ -329,20 +329,26 @@ def create_train_endpoint(
                                         content={"error": "job_id does not belong to the requested dataset"},
                                         status_code=HTTPStatus.BAD_REQUEST,
                                     )
-                                
+
                                 if job.status.value == "started":
-                                    return get_json_error_response(
-                                        content={
-                                            "error": "Cannot cancel a job that is already running. "
-                                            "Running jobs must complete or be forcefully terminated by an administrator."
-                                        },
-                                        status_code=HTTPStatus.CONFLICT,
-                                    )
+                                    cancellation_requested = queue.request_job_cancellation(job_id=job_id)
+                                    if cancellation_requested:
+                                        return get_json_ok_response(
+                                            {
+                                                "job_id": job_id,
+                                                "status": "cancellation-requested",
+                                                "message": "Cancellation requested. The running training job will stop shortly.",
+                                            },
+                                            max_age=0,
+                                        )
                             except DoesNotExist:
                                 pass
                             
                             return get_json_error_response(
-                                content={"error": "Training job not found or already completed"},
+                                content={
+                                    "error": "Training job is no longer cancelable.",
+                                    "cause": "The job may have already completed or failed. Refresh status to see the final result.",
+                                },
                                 status_code=HTTPStatus.NOT_FOUND,
                             )
                     except Exception as e:

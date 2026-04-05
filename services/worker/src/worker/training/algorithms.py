@@ -6,8 +6,11 @@ import importlib
 import inspect
 from typing import Any, Optional, TypedDict
 
+from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
+
 
 class TrainingExecutionContext(TypedDict):
+    job_id: str
     dataset: str
     revision: str
     model_name: str
@@ -22,11 +25,53 @@ class TrainingExecutionContext(TypedDict):
     experiment_name: Optional[str]
     local_dataset_path: Optional[str]
     local_dataset_format: Optional[str]
+    cancellation_checker: Optional[Callable[[], bool]]
 
 
 class TrainingAlgorithmResult(TypedDict):
     metrics: Mapping[str, float]
     artifacts: Mapping[str, Any]
+
+
+class TrainingCancelledError(RuntimeError):
+    pass
+
+
+class CancellationCallback(TrainerCallback):
+    def __init__(self, cancellation_checker: Callable[[], bool]):
+        self._cancellation_checker = cancellation_checker
+        self.cancelled = False
+
+    def _check(self, control: TrainerControl) -> TrainerControl:
+        if self._cancellation_checker():
+            self.cancelled = True
+            control.should_training_stop = True
+        return control
+
+    def on_step_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs: Any,
+    ) -> TrainerControl:
+        return self._check(control)
+
+    def on_epoch_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs: Any,
+    ) -> TrainerControl:
+        return self._check(control)
+
+
+def build_cancellation_callback(context: TrainingExecutionContext) -> Optional[CancellationCallback]:
+    cancellation_checker = context.get("cancellation_checker")
+    if cancellation_checker is None:
+        return None
+    return CancellationCallback(cancellation_checker=cancellation_checker)
 
 
 TrainingAlgorithm = Callable[[TrainingExecutionContext], TrainingAlgorithmResult]
