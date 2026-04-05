@@ -14,6 +14,13 @@ DEFAULT_SERVER = os.environ.get("DEFAULT_SERVER", "https://54.198.247.234")
 DEFAULT_HF_ENDPOINT = os.environ.get("DEFAULT_HF_ENDPOINT", "https://huggingface.co")
 PRESETS_FILE = Path(os.environ.get("QUERY_UI_PRESETS_FILE", str(Path(__file__).with_name("presets.json"))))
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 # fallback metadata used when /openapi.json cannot be fetched from the target server
 DEFAULT_ENDPOINT_METADATA: dict[str, dict[str, Any]] = {
     "/is-valid": {
@@ -946,8 +953,11 @@ if __name__ == "__main__":
     launch_kwargs = {
         "server_name": os.environ.get("GRADIO_SERVER_NAME", "0.0.0.0"),
         "server_port": int(os.environ.get("GRADIO_SERVER_PORT", "7860")),
+        "share": _env_bool("GRADIO_SHARE", default=False),
     }
-    configured_root_path = os.environ.get("GRADIO_ROOT_PATH")
+    configured_root_path = (os.environ.get("GRADIO_ROOT_PATH") or "").strip()
+    if configured_root_path and not configured_root_path.startswith("/"):
+        configured_root_path = f"/{configured_root_path}"
     if configured_root_path:
         try:
             if "root_path" in inspect.signature(demo.launch).parameters:
