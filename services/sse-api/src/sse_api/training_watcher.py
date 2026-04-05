@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib import parse as urlparse
 from uuid import uuid4
 
 from bson import ObjectId
@@ -84,6 +85,7 @@ def _extract_modal_metadata(params_dict: Mapping[str, Any]) -> dict[str, Any]:
         "modal_cancel_url",
         "modal_remote_status",
         "modal_remote_message",
+        "modal_remote_stage",
         "modal_remote_updated_at",
         "modal_remote_finished_at",
         "structured_model_path",
@@ -91,6 +93,15 @@ def _extract_modal_metadata(params_dict: Mapping[str, Any]) -> dict[str, Any]:
         "modal_auto_shutdown",
     )
     return {field: params_dict[field] for field in modal_fields if field in params_dict and params_dict[field] is not None}
+
+
+def _append_modal_proxy_urls(modal: dict[str, Any], dataset: str) -> dict[str, Any]:
+    run_id = modal.get("modal_run_id")
+    if isinstance(run_id, str) and run_id:
+        encoded_dataset = urlparse.quote(dataset, safe="")
+        modal.setdefault("modal_status_proxy_url", f"/api/train/modal/{run_id}?dataset={encoded_dataset}")
+        modal.setdefault("modal_logs_proxy_url", f"/api/train/modal/{run_id}/logs?dataset={encoded_dataset}")
+    return modal
 
 
 def _queue_status_to_status(queue_status: str) -> str:
@@ -130,7 +141,7 @@ def _to_event_value(document: Mapping[str, Any]) -> Optional[TrainingStatusEvent
         return None
 
     params_dict = document.get("params_dict")
-    modal = _extract_modal_metadata(params_dict if isinstance(params_dict, Mapping) else {})
+    modal = _append_modal_proxy_urls(_extract_modal_metadata(params_dict if isinstance(params_dict, Mapping) else {}), dataset)
     modal_remote_status = modal.get("modal_remote_status")
     effective_status = _modal_remote_status_to_status(str(modal_remote_status) if modal_remote_status else None)
 

@@ -210,14 +210,13 @@ def run_training_on_modal(
             else None
         )
         last_runtime_snapshot: dict[str, Any] = {}
-        used_streaming = False
+        stream_reached_terminal_state = False
         try:
             stream_events = _request_sse_events(
                 url=events_url,
                 headers=headers,
                 timeout_seconds=modal_config.request_timeout_seconds,
             )
-            used_streaming = len(stream_events) > 0
             for event in stream_events:
                 result = event
                 state = _extract_state(result)
@@ -255,11 +254,12 @@ def run_training_on_modal(
                     raise TrainingCancelledError("Training cancelled while waiting for modal run completion.")
 
                 if state in TERMINAL_SUCCESS_STATES | TERMINAL_CANCELLED_STATES | TERMINAL_FAILED_STATES:
+                    stream_reached_terminal_state = True
                     break
         except Exception:
-            used_streaming = False
+            stream_reached_terminal_state = False
 
-        if not used_streaming:
+        if not stream_reached_terminal_state:
             while True:
                 cancellation_checker = context.get("cancellation_checker")
                 if cancellation_checker is not None and cancellation_checker():

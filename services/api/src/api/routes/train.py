@@ -72,8 +72,8 @@ def _append_modal_proxy_urls(modal: dict[str, Any], dataset: str) -> dict[str, A
     run_id = modal.get("modal_run_id")
     if isinstance(run_id, str) and run_id:
         encoded_dataset = urlparse.quote(dataset, safe="")
-        modal.setdefault("modal_status_proxy_url", f"/train/modal/{run_id}?dataset={encoded_dataset}")
-        modal.setdefault("modal_logs_proxy_url", f"/train/modal/{run_id}/logs?dataset={encoded_dataset}")
+        modal.setdefault("modal_status_proxy_url", f"/api/train/modal/{run_id}?dataset={encoded_dataset}")
+        modal.setdefault("modal_logs_proxy_url", f"/api/train/modal/{run_id}/logs?dataset={encoded_dataset}")
     return modal
 
 
