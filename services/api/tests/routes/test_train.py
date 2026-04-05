@@ -88,6 +88,30 @@ def test_train_post_rejects_unknown_hyperparameter(client: TestClient) -> None:
     assert "Unknown training parameter" in response.json()["error"]
 
 
+def test_train_post_rejects_when_another_training_job_is_active(client: TestClient) -> None:
+    first = client.post(
+        "/train",
+        json={
+            "dataset": "org/dataset-a",
+            "modelName": "bert-base-uncased",
+        },
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/train",
+        json={
+            "dataset": "org/dataset-b",
+            "modelName": "bert-base-uncased",
+        },
+    )
+
+    assert second.status_code == 409
+    payload = second.json()
+    assert payload["error"] == "Another training job is already active."
+    assert payload["active_job"]["dataset"] == "org/dataset-a"
+
+
 def test_train_get_requires_dataset(client: TestClient) -> None:
     response = client.get("/train")
 

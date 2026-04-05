@@ -11,6 +11,7 @@ from mongoengine.errors import DoesNotExist
 from libapi.authentication import auth_check
 from libapi.utils import Endpoint, get_json_error_response, get_json_ok_response, get_cache_entry_from_step
 from libcommon.config import S3Config
+from libcommon.dtos import Status
 from libcommon.prometheus import StepProfiler
 from libcommon.queue.jobs import JobDocument, Queue
 from libcommon.simple_cache import CachedResponseDocument
@@ -230,6 +231,23 @@ def create_train_endpoint(
                             hf_jwt_public_keys=hf_jwt_public_keys,
                             hf_jwt_algorithm=hf_jwt_algorithm,
                             hf_timeout_seconds=hf_timeout_seconds,
+                        )
+
+                    active_training_job = JobDocument.objects(
+                        type="dataset-train", status__in=[Status.WAITING, Status.STARTED]
+                    ).order_by("+created_at").first()
+                    if active_training_job is not None:
+                        return get_json_error_response(
+                            content={
+                                "error": "Another training job is already active.",
+                                "cause": "Only one active training job is allowed at a time to avoid resource conflicts.",
+                                "active_job": {
+                                    "job_id": str(active_training_job.pk),
+                                    "dataset": active_training_job.dataset,
+                                    "queue_status": active_training_job.status.value,
+                                },
+                            },
+                            status_code=HTTPStatus.CONFLICT,
                         )
 
                     queue = Queue()
