@@ -12,11 +12,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import modal
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse, Response
-from starlette.routing import Route
-from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_404_NOT_FOUND
 
 ROOT_DIR = Path(__file__).resolve().parents[4]
 WORKER_SRC_DIR = ROOT_DIR / "services" / "worker" / "src"
@@ -48,11 +43,11 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _base_url(request: Request) -> str:
+def _base_url(request: Any) -> str:
     return str(request.base_url).rstrip("/")
 
 
-def _require_webhook_token(request: Request) -> None:
+def _require_webhook_token(request: Any) -> None:
     expected_token = os.environ.get(WEBHOOK_TOKEN_ENV_VAR, "")
     if not expected_token:
         return
@@ -211,11 +206,13 @@ def train_remote(run_id: str, payload: dict[str, Any]) -> None:
         raise
 
 
-async def _train(request: Request) -> Response:
+async def _train(request: Any) -> Any:
+    from starlette.responses import JSONResponse
+
     try:
         _require_webhook_token(request)
     except RuntimeError:
-        return JSONResponse({"error": "Unauthorized"}, status_code=HTTP_401_UNAUTHORIZED)
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     try:
         payload = await request.json()
@@ -257,29 +254,33 @@ async def _train(request: Request) -> Response:
     )
 
 
-async def _status(request: Request) -> Response:
+async def _status(request: Any) -> Any:
+    from starlette.responses import JSONResponse
+
     try:
         _require_webhook_token(request)
     except RuntimeError:
-        return JSONResponse({"error": "Unauthorized"}, status_code=HTTP_401_UNAUTHORIZED)
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     run_id = request.path_params["run_id"]
     state = _get_state(run_id)
     if state is None:
-        return JSONResponse({"error": "Run not found", "status": "not_found"}, status_code=HTTP_404_NOT_FOUND)
+        return JSONResponse({"error": "Run not found", "status": "not_found"}, status_code=404)
     return JSONResponse(state)
 
 
-async def _cancel(request: Request) -> Response:
+async def _cancel(request: Any) -> Any:
+    from starlette.responses import JSONResponse
+
     try:
         _require_webhook_token(request)
     except RuntimeError:
-        return JSONResponse({"error": "Unauthorized"}, status_code=HTTP_401_UNAUTHORIZED)
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     run_id = request.path_params["run_id"]
     state = _get_state(run_id)
     if state is None:
-        return JSONResponse({"error": "Run not found", "status": "not_found"}, status_code=HTTP_404_NOT_FOUND)
+        return JSONResponse({"error": "Run not found", "status": "not_found"}, status_code=404)
     state["cancel_requested"] = True
     state["status"] = "cancellation-requested"
     state["message"] = "Cancellation requested. The remote job will stop shortly."
@@ -289,23 +290,28 @@ async def _cancel(request: Request) -> Response:
     return JSONResponse({"run_id": run_id, "status": "cancellation-requested", "message": state["message"]})
 
 
-async def _logs(request: Request) -> Response:
+async def _logs(request: Any) -> Any:
+    from starlette.responses import JSONResponse, PlainTextResponse
+
     try:
         _require_webhook_token(request)
     except RuntimeError:
-        return JSONResponse({"error": "Unauthorized"}, status_code=HTTP_401_UNAUTHORIZED)
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     run_id = request.path_params["run_id"]
     state = _get_state(run_id)
     if state is None:
-        return JSONResponse({"error": "Run not found", "status": "not_found"}, status_code=HTTP_404_NOT_FOUND)
+        return JSONResponse({"error": "Run not found", "status": "not_found"}, status_code=404)
     logs = state.get("logs") or []
     return PlainTextResponse("\n".join(str(line) for line in logs))
 
 
 @app.function(image=image, secrets=[modal.Secret.from_name(WEBHOOK_SECRET_NAME, required_keys=[WEBHOOK_TOKEN_ENV_VAR])])
 @modal.asgi_app()
-def modal_training_api() -> Starlette:
+def modal_training_api() -> Any:
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
     return Starlette(
         routes=[
             Route("/train", _train, methods=["POST"]),
