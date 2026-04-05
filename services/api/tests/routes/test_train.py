@@ -277,3 +277,60 @@ def test_train_post_rejects_unsupported_training_algorithm(client: TestClient) -
 
     assert response.status_code == 400
     assert "Unsupported trainingAlgorithm" in response.json()["error"]
+
+
+def test_train_jobs_lists_active_and_ended_jobs(client: TestClient) -> None:
+    queue_post = client.post(
+        "/train",
+        json={
+            "dataset": "org/active-dataset",
+            "modelName": "bert-base-uncased",
+            "trainingAlgorithm": "lora",
+        },
+    )
+    assert queue_post.status_code == 200
+    job_id = queue_post.json()["job_id"]
+
+    queue = Queue()
+    queue.update_job_params_dict(
+        job_id,
+        {
+            "modal_run_id": "run-active-1",
+            "modal_status_url": "https://modal.example.com/runs/run-active-1",
+            "modal_logs_url": "https://modal.example.com/runs/run-active-1/logs",
+            "structured_model_path": "models/dataset/org--active-dataset/revision/main/algorithm/lora/experiment/default/job/job-123/20260405T000000Z",
+            "execution_backend": "modal",
+        },
+    )
+
+    upsert_response(
+        kind="dataset-train",
+        dataset="org/completed-dataset",
+        dataset_git_revision="main",
+        content={
+            "status": "success",
+            "model_name": "bert-base-uncased",
+            "training_algorithm": "lora",
+            "artifacts": {
+                "structured_model_path": "https://storage.example.com/models/completed",
+                "modal_run_id": "run-ended-1",
+            },
+        },
+        http_status=HTTPStatus.OK,
+    )
+
+    response = client.get("/train/jobs")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_active"] >= 1
+    assert payload["total_ended"] >= 1
+
+    active_entry = next(item for item in payload["active"] if item["job_id"] == job_id)
+    assert active_entry["dataset"] == "org/active-dataset"
+    assert active_entry["status"] == "queued"
+    assert active_entry["modal"]["modal_run_id"] == "run-active-1"
+
+    ended_entry = next(item for item in payload["ended"] if item["dataset"] == "org/completed-dataset")
+    assert ended_entry["status"] == "succeeded"
+    assert ended_entry["model_url"] == "https://storage.example.com/models/completed"

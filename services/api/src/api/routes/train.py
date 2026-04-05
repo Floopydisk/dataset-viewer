@@ -12,7 +12,8 @@ from libapi.authentication import auth_check
 from libapi.utils import Endpoint, get_json_error_response, get_json_ok_response, get_cache_entry_from_step
 from libcommon.config import S3Config
 from libcommon.prometheus import StepProfiler
-from libcommon.queue.jobs import Queue
+from libcommon.queue.jobs import JobDocument, Queue
+from libcommon.simple_cache import CachedResponseDocument
 from libcommon.storage_client import StorageClient
 from libcommon.train import TrainValidationError, get_training_capabilities, parse_training_request
 from starlette.requests import Request
@@ -69,6 +70,95 @@ def create_train_capabilities_endpoint() -> Endpoint:
             return get_json_ok_response(content=get_training_capabilities(), max_age=0)
 
     return train_capabilities_endpoint
+
+
+def create_train_jobs_endpoint() -> Endpoint:
+    async def train_jobs_endpoint(request: Request) -> Response:
+        with StepProfiler("train-jobs", "endpoint"):
+            if request.method != "GET":
+                return get_json_error_response(
+                    content={"error": "Method not allowed"}, status_code=HTTPStatus.METHOD_NOT_ALLOWED
+                )
+
+            dataset_filter = request.query_params.get("dataset")
+            limit_raw = request.query_params.get("limit", "50")
+            try:
+                limit = max(1, min(int(limit_raw), 200))
+            except ValueError:
+                return get_json_error_response(
+                    content={"error": "'limit' must be an integer"}, status_code=HTTPStatus.BAD_REQUEST
+                )
+
+            active_query: dict[str, Any] = {"type": "dataset-train"}
+            if dataset_filter:
+                active_query["dataset"] = dataset_filter
+
+            active_jobs = []
+            for job in JobDocument.objects(**active_query).order_by("-created_at").limit(limit):
+                params_dict = dict(job.params_dict or {})
+                artifacts = params_dict.get("artifacts")
+                artifacts_dict = dict(artifacts) if isinstance(artifacts, Mapping) else {}
+                modal_source = {**params_dict, **artifacts_dict}
+                active_jobs.append(
+                    {
+                        "job_id": str(job.pk),
+                        "dataset": job.dataset,
+                        "revision": job.revision,
+                        "status": "running" if job.status.value == "started" else "queued",
+                        "queue_status": job.status.value,
+                        "created_at": job.created_at.isoformat() if job.created_at else None,
+                        "started_at": job.started_at.isoformat() if job.started_at else None,
+                        "cancel_requested": bool(job.cancel_requested),
+                        "params": params_dict,
+                        "modal": _extract_modal_metadata(modal_source),
+                        "model_name": params_dict.get("model_name"),
+                        "training_algorithm": params_dict.get("training_algorithm"),
+                    }
+                )
+
+            ended_query: dict[str, Any] = {"kind": "dataset-train"}
+            if dataset_filter:
+                ended_query["dataset"] = dataset_filter
+
+            ended_jobs = []
+            for entry in CachedResponseDocument.objects(**ended_query).order_by("-updated_at").limit(limit):
+                content = dict(entry.content or {})
+                artifacts = content.get("artifacts")
+                artifacts_dict = dict(artifacts) if isinstance(artifacts, Mapping) else {}
+                modal_source = {**content, **artifacts_dict}
+                model_path = artifacts_dict.get("structured_model_path") or artifacts_dict.get("checkpoint_dir")
+                model_url = model_path if isinstance(model_path, str) and model_path.startswith(("http://", "https://")) else None
+                status = "succeeded" if entry.http_status == HTTPStatus.OK else "failed"
+                ended_jobs.append(
+                    {
+                        "job_id": artifacts_dict.get("modal_run_id") or f"{entry.dataset}:{entry.updated_at.isoformat()}",
+                        "dataset": entry.dataset,
+                        "revision": entry.dataset_git_revision,
+                        "status": status,
+                        "queue_status": None,
+                        "updated_at": entry.updated_at.isoformat() if entry.updated_at else None,
+                        "http_status": int(entry.http_status.value),
+                        "error_code": entry.error_code,
+                        "result": content,
+                        "modal": _extract_modal_metadata(modal_source),
+                        "model_name": content.get("model_name"),
+                        "training_algorithm": content.get("training_algorithm"),
+                        "model_path": model_path,
+                        "model_url": model_url,
+                    }
+                )
+
+            return get_json_ok_response(
+                {
+                    "active": active_jobs,
+                    "ended": ended_jobs,
+                    "total_active": len(active_jobs),
+                    "total_ended": len(ended_jobs),
+                },
+                max_age=0,
+            )
+
+    return train_jobs_endpoint
 
 
 def create_train_endpoint(
