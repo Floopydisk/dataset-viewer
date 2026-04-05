@@ -20,7 +20,7 @@ import pyarrow as pa
 import pytz
 from mongoengine import Document
 from mongoengine.errors import DoesNotExist
-from mongoengine.fields import BoolField, DateTimeField, DictField, EnumField, IntField, StringField
+from mongoengine.fields import BooleanField, DateTimeField, DictField, EnumField, IntField, StringField
 from mongoengine.queryset.queryset import QuerySet
 from pymongoarrow.api import Schema, find_pandas_all
 
@@ -194,7 +194,7 @@ class JobDocument(Document):
     namespace = StringField(required=True)
     priority = EnumField(Priority, default=Priority.LOW)
     status = EnumField(Status, default=Status.WAITING)
-    cancel_requested = BoolField(default=False)
+    cancel_requested = BooleanField(default=False)
     difficulty = IntField(required=True)
     created_at = DateTimeField(required=True)
     started_at = DateTimeField()
