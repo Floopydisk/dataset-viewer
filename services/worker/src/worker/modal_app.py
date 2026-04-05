@@ -34,8 +34,8 @@ image = (
         "datasets",
         "torch",
     )
-    .add_local_dir(str(WORKER_SRC_DIR), remote_path="/root/services/worker/src")
     .env({"PYTHONPATH": "/root/services/worker/src"})
+    .add_local_dir(str(WORKER_SRC_DIR), remote_path="/root/services/worker/src")
 )
 
 app = modal.App("dataset-viewer-training")
