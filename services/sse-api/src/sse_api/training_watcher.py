@@ -101,6 +101,19 @@ def _queue_status_to_status(queue_status: str) -> str:
     return queue_status
 
 
+def _modal_remote_status_to_status(modal_remote_status: str | None) -> str | None:
+    if modal_remote_status is None:
+        return None
+    normalized = modal_remote_status.strip().lower()
+    if normalized in TERMINAL_SUCCESS_STATES:
+        return "succeeded"
+    if normalized in TERMINAL_CANCELLED_STATES:
+        return "cancelled"
+    if normalized in TERMINAL_FAILED_STATES:
+        return "failed"
+    return None
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -118,11 +131,13 @@ def _to_event_value(document: Mapping[str, Any]) -> Optional[TrainingStatusEvent
 
     params_dict = document.get("params_dict")
     modal = _extract_modal_metadata(params_dict if isinstance(params_dict, Mapping) else {})
+    modal_remote_status = modal.get("modal_remote_status")
+    effective_status = _modal_remote_status_to_status(str(modal_remote_status) if modal_remote_status else None)
 
     return TrainingStatusEventValue(
         job_id=str(job_id_value),
         dataset=dataset,
-        status=_queue_status_to_status(queue_status),
+        status=effective_status or _queue_status_to_status(queue_status),
         queue_status=queue_status,
         modal=modal,
         updated_at=_now(),
