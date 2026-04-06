@@ -10,7 +10,7 @@ from transformers import AutoTokenizer, PreTrainedModel
 
 from worker.training._base import get_device, resolve_output_dir, resolve_task, set_seed
 from worker.training._data import build_data_collator, ensure_padding_token, load_splits, tokenize_split
-from worker.training._trainer import build_trainer
+from worker.training._trainer import build_trainer, train_with_resume
 from worker.training.algorithms import (
     TrainingAlgorithmResult,
     TrainingCancelledError,
@@ -48,7 +48,7 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
         raise ValueError("model_name must be a non-empty string")
 
     task_type = context["task_type"]
-    output_dir = resolve_output_dir("linear-probing", context["experiment_name"])
+    output_dir = resolve_output_dir("linear-probing", context["experiment_name"], run_id=context["job_id"])
 
     splits = load_splits(
         dataset=context["dataset"],
@@ -83,7 +83,7 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
         seed=context["seed"] or 42,
         callbacks=callbacks or None,
     )
-    train_result = trainer.train()
+    train_result, resume_metadata = train_with_resume(trainer=trainer, output_dir=output_dir)
     if cancellation_callback and cancellation_callback.cancelled:
         raise TrainingCancelledError(f"Training cancelled for job {context['job_id']}")
     trainer.save_model(output_dir)
@@ -97,5 +97,10 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
 
     return TrainingAlgorithmResult(
         metrics=metrics,
-        artifacts={"trainable_params": trainable, "checkpoint_dir": output_dir},
+        artifacts={
+            "trainable_params": trainable,
+            "checkpoint_dir": output_dir,
+            "modal_resumed_from_checkpoint": resume_metadata["resumed_from_checkpoint"],
+            "modal_resume_checkpoint_path": resume_metadata["resume_checkpoint_path"],
+        },
     )

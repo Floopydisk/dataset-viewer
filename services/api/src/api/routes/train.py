@@ -68,6 +68,8 @@ def _extract_modal_metadata(source: Mapping[str, Any]) -> dict[str, Any]:
         "modal_auto_shutdown",
         "modal_gpu",
         "modal_gpu_count",
+        "modal_resumed_from_checkpoint",
+        "modal_resume_checkpoint_path",
     )
     modal = {field: source[field] for field in modal_fields if field in source and source[field] is not None}
     return modal

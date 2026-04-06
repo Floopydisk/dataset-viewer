@@ -39,6 +39,12 @@ _TASK_MAP: dict[
 }
 
 _SUPPORTED_TASK_TYPES: frozenset[str] = frozenset(_TASK_MAP)
+_TRAINING_OUTPUT_ROOT_ENV_VAR = "TRAINING_OUTPUT_ROOT"
+_DEFAULT_TRAINING_OUTPUT_ROOT = "/tmp/training"
+
+
+def _slugify_path_segment(value: str) -> str:
+    return value.strip().replace("/", "--").replace(" ", "-")
 
 
 def resolve_task(task_type: str) -> tuple[type[PreTrainedModel], TaskType]:
@@ -54,12 +60,17 @@ def resolve_task(task_type: str) -> tuple[type[PreTrainedModel], TaskType]:
     return entry  # type: ignore[return-value]
 
 
-def resolve_output_dir(algorithm: str, experiment_name: Optional[str]) -> str:
+def resolve_output_dir(algorithm: str, experiment_name: Optional[str], run_id: Optional[str] = None) -> str:
     """Return a deterministic output directory path for saving checkpoints."""
+    root = os.environ.get(_TRAINING_OUTPUT_ROOT_ENV_VAR, _DEFAULT_TRAINING_OUTPUT_ROOT).strip()
+    if not root:
+        root = _DEFAULT_TRAINING_OUTPUT_ROOT
+
+    path = os.path.join(root, _slugify_path_segment(algorithm))
     if experiment_name:
-        path = os.path.join("/tmp", "training", algorithm, experiment_name.strip())
-    else:
-        path = os.path.join("/tmp", "training", algorithm)
+        path = os.path.join(path, _slugify_path_segment(experiment_name))
+    if run_id:
+        path = os.path.join(path, _slugify_path_segment(run_id))
     os.makedirs(path, exist_ok=True)
     return path
 

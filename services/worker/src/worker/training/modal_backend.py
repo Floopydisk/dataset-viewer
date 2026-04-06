@@ -295,6 +295,12 @@ def run_training_on_modal(
                 submilestones = result.get("training_submilestones")
                 if isinstance(submilestones, list):
                     runtime_snapshot["modal_training_submilestones"] = submilestones
+                resumed_from_checkpoint = result.get("modal_resumed_from_checkpoint")
+                if isinstance(resumed_from_checkpoint, bool):
+                    runtime_snapshot["modal_resumed_from_checkpoint"] = resumed_from_checkpoint
+                resume_checkpoint_path = result.get("modal_resume_checkpoint_path")
+                if isinstance(resume_checkpoint_path, str) and resume_checkpoint_path:
+                    runtime_snapshot["modal_resume_checkpoint_path"] = resume_checkpoint_path
 
                 if runtime_snapshot != last_runtime_snapshot:
                     Queue().update_job_params_dict(context["job_id"], runtime_snapshot)
@@ -364,6 +370,12 @@ def run_training_on_modal(
                 submilestones = result.get("training_submilestones")
                 if isinstance(submilestones, list):
                     runtime_snapshot["modal_training_submilestones"] = submilestones
+                resumed_from_checkpoint = result.get("modal_resumed_from_checkpoint")
+                if isinstance(resumed_from_checkpoint, bool):
+                    runtime_snapshot["modal_resumed_from_checkpoint"] = resumed_from_checkpoint
+                resume_checkpoint_path = result.get("modal_resume_checkpoint_path")
+                if isinstance(resume_checkpoint_path, str) and resume_checkpoint_path:
+                    runtime_snapshot["modal_resume_checkpoint_path"] = resume_checkpoint_path
 
                 if runtime_snapshot != last_runtime_snapshot:
                     Queue().update_job_params_dict(context["job_id"], runtime_snapshot)
@@ -407,6 +419,10 @@ def run_training_on_modal(
         artifacts.setdefault("modal_training_progress_pct", float(result["training_progress_pct"]))
     if isinstance(result.get("training_submilestones"), list):
         artifacts.setdefault("modal_training_submilestones", result["training_submilestones"])
+    if isinstance(result.get("modal_resumed_from_checkpoint"), bool):
+        artifacts.setdefault("modal_resumed_from_checkpoint", bool(result["modal_resumed_from_checkpoint"]))
+    if isinstance(result.get("modal_resume_checkpoint_path"), str):
+        artifacts.setdefault("modal_resume_checkpoint_path", str(result["modal_resume_checkpoint_path"]))
     if isinstance(result.get("updated_at"), str):
         artifacts.setdefault("modal_remote_updated_at", str(result["updated_at"]))
     if isinstance(result.get("finished_at"), str):

@@ -1,13 +1,67 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024 The HuggingFace Authors.
 
-from typing import Any, Optional
+import logging
+from pathlib import Path
+import re
+from typing import Any, Optional, TypedDict
 
 import torch
 from datasets import Dataset
 from transformers import Trainer, TrainingArguments
 
 from worker.training._base import get_device
+
+
+_CHECKPOINT_DIR_RE = re.compile(r"^checkpoint-(\d+)$")
+
+
+class ResumeMetadata(TypedDict):
+    resumed_from_checkpoint: bool
+    resume_checkpoint_path: Optional[str]
+
+
+def _latest_checkpoint_dir(output_dir: str) -> Optional[str]:
+    root = Path(output_dir)
+    if not root.exists():
+        return None
+
+    latest_step = -1
+    latest_dir: Optional[Path] = None
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        match = _CHECKPOINT_DIR_RE.match(child.name)
+        if match is None:
+            continue
+        step = int(match.group(1))
+        if step > latest_step:
+            latest_step = step
+            latest_dir = child
+
+    return str(latest_dir) if latest_dir is not None else None
+
+
+def train_with_resume(*, trainer: Trainer, output_dir: str) -> tuple[Any, ResumeMetadata]:
+    checkpoint_dir = _latest_checkpoint_dir(output_dir)
+    if checkpoint_dir is None:
+        return trainer.train(), {
+            "resumed_from_checkpoint": False,
+            "resume_checkpoint_path": None,
+        }
+
+    logging.info("Resuming training from checkpoint: %s", checkpoint_dir)
+    try:
+        return trainer.train(resume_from_checkpoint=checkpoint_dir), {
+            "resumed_from_checkpoint": True,
+            "resume_checkpoint_path": checkpoint_dir,
+        }
+    except Exception as err:
+        logging.warning("Checkpoint resume failed from %s (%s). Restarting from scratch.", checkpoint_dir, err)
+        return trainer.train(), {
+            "resumed_from_checkpoint": False,
+            "resume_checkpoint_path": checkpoint_dir,
+        }
 
 
 def build_trainer(

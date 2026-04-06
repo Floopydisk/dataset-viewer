@@ -45,6 +45,11 @@ for source_dir in (str(WORKER_SRC_DIR),):
 RUN_STATE_DICT_NAME = "dataset-viewer-modal-training-runs"
 WEBHOOK_SECRET_NAME = "dataset-viewer-training"
 WEBHOOK_TOKEN_ENV_VAR = "WEBHOOK_TOKEN"
+CHECKPOINT_VOLUME_NAME = "dataset-viewer-training-checkpoints"
+CHECKPOINT_VOLUME_MOUNT_PATH = "/vol/checkpoints"
+TRAINING_OUTPUT_ROOT_ENV_VAR = "TRAINING_OUTPUT_ROOT"
+
+CHECKPOINT_VOLUME = modal.Volume.from_name(CHECKPOINT_VOLUME_NAME, create_if_missing=True)
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -58,7 +63,7 @@ image = (
         "bitsandbytes",
     )
     .run_commands("python -m pip install --index-url https://download.pytorch.org/whl/cu128 torch==2.7.0+cu128")
-    .env({"PYTHONPATH": "/root/services/worker/src"})
+    .env({"PYTHONPATH": "/root/services/worker/src", TRAINING_OUTPUT_ROOT_ENV_VAR: CHECKPOINT_VOLUME_MOUNT_PATH})
     .add_local_dir(str(WORKER_SRC_DIR), remote_path="/root/services/worker/src")
 )
 
@@ -113,6 +118,8 @@ def _run_artifacts(base_url: str, run_id: str, payload: Mapping[str, Any]) -> di
         "modal_status_url": f"{base_url}/runs/{run_id}",
         "modal_logs_url": f"{base_url}/runs/{run_id}/logs",
         "modal_cancel_url": f"{base_url}/runs/{run_id}/cancel",
+        "modal_checkpoint_volume": CHECKPOINT_VOLUME_NAME,
+        "modal_checkpoint_mount_path": CHECKPOINT_VOLUME_MOUNT_PATH,
     }
 
 
@@ -304,17 +311,30 @@ def _execute_training(run_id: str, payload: dict[str, Any]) -> None:
             artifacts["modal_training_eta_seconds"] = float(state_after_training["training_eta_seconds"])
         if isinstance(state_after_training.get("training_progress_pct"), (int, float)):
             artifacts["modal_training_progress_pct"] = float(state_after_training["training_progress_pct"])
+
+        resumed_from_checkpoint = artifacts.get("modal_resumed_from_checkpoint")
+        resume_checkpoint_path = artifacts.get("modal_resume_checkpoint_path")
+
         artifacts.update(_run_artifacts(base_url, run_id, normalized))
+
+        status_updates: dict[str, Any] = {
+            "metrics": metrics,
+            "artifacts": artifacts,
+            "finished_at": _now(),
+            "stage": "completed",
+            "training_eta_seconds": 0.0,
+            "training_progress_pct": 100.0,
+        }
+        if isinstance(resumed_from_checkpoint, bool):
+            status_updates["modal_resumed_from_checkpoint"] = resumed_from_checkpoint
+        if isinstance(resume_checkpoint_path, str) and resume_checkpoint_path:
+            status_updates["modal_resume_checkpoint_path"] = resume_checkpoint_path
+
         _set_status(
             run_id,
             "succeeded",
             "Training finished successfully.",
-            metrics=metrics,
-            artifacts=artifacts,
-            finished_at=_now(),
-            stage="completed",
-            training_eta_seconds=0.0,
-            training_progress_pct=100.0,
+            **status_updates,
         )
         _append_log(run_id, "Training completed successfully.")
     except TrainingCancelledError:
@@ -334,17 +354,17 @@ def _execute_training(run_id: str, payload: dict[str, Any]) -> None:
         raise
 
 
-@app.function(image=image, timeout=60 * 60 * 8, gpu="T4")
+@app.function(image=image, timeout=60 * 60 * 8, gpu="T4", volumes={CHECKPOINT_VOLUME_MOUNT_PATH: CHECKPOINT_VOLUME})
 def train_remote_t4(run_id: str, payload: dict[str, Any]) -> None:
     _execute_training(run_id=run_id, payload=payload)
 
 
-@app.function(image=image, timeout=60 * 60 * 8, gpu="A10G")
+@app.function(image=image, timeout=60 * 60 * 8, gpu="A10G", volumes={CHECKPOINT_VOLUME_MOUNT_PATH: CHECKPOINT_VOLUME})
 def train_remote_a10g(run_id: str, payload: dict[str, Any]) -> None:
     _execute_training(run_id=run_id, payload=payload)
 
 
-@app.function(image=image, timeout=60 * 60 * 8, gpu="A100")
+@app.function(image=image, timeout=60 * 60 * 8, gpu="A100", volumes={CHECKPOINT_VOLUME_MOUNT_PATH: CHECKPOINT_VOLUME})
 def train_remote_a100(run_id: str, payload: dict[str, Any]) -> None:
     _execute_training(run_id=run_id, payload=payload)
 

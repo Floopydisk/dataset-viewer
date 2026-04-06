@@ -28,6 +28,7 @@ from worker.training.algorithms import SUPPORTED_ALGORITHMS, TrainingAlgorithmRe
 
 def _get_context(task_type: str = "text-classification") -> dict[str, object]:
     return {
+        "job_id": "job-123",
         "dataset": "stanfordnlp/imdb",
         "revision": "main",
         "model_name": "distilbert-base-uncased",
@@ -91,6 +92,13 @@ def test_resolve_output_dir_falls_back_to_algorithm(tmp_path: object) -> None:
     with patch("worker.training._base.os.makedirs"):
         path = resolve_output_dir("lora", None)
     assert path == "/tmp/training/lora"
+
+
+def test_resolve_output_dir_uses_run_id_and_configured_root(tmp_path: object) -> None:
+    with patch.dict("worker.training._base.os.environ", {"TRAINING_OUTPUT_ROOT": "/vol/checkpoints"}, clear=False):
+        with patch("worker.training._base.os.makedirs"):
+            path = resolve_output_dir("lora", "my-experiment", run_id="job/1")
+    assert path == "/vol/checkpoints/lora/my-experiment/job--1"
 
 
 # ---------------------------------------------------------------------------
