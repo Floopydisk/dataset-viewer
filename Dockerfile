@@ -131,7 +131,7 @@ RUN if [ "$(uname -m)" = "aarch64" ]; then \
     apt-get update && apt-get install -y build-essential && \
     rm -rf /var/lib/apt/lists/*; \
     fi
-# RUN poetry lock
+RUN poetry lock
 RUN poetry install --no-cache
 # Install libviewer wheel built in the viewer stage
 COPY --from=viewer /tmp/dist /tmp/dist
