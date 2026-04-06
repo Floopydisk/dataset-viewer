@@ -6,7 +6,6 @@
 import logging
 from typing import Any, Optional
 
-import torch
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import AutoTokenizer, BitsAndBytesConfig
 
@@ -39,6 +38,8 @@ def _load_qlora_model(model_name: str, task_type: str) -> tuple[Any, int, bool]:
         lora_alpha=_LORA_ALPHA,
         lora_dropout=_LORA_DROPOUT,
     )
+
+    import torch
 
     if torch.cuda.is_available():
         quantization_config = BitsAndBytesConfig(
@@ -105,7 +106,6 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
         learning_rate=context["learning_rate"],
         seed=context["seed"] or 42,
         callbacks=callbacks or None,
-        fp16=torch.cuda.is_available(),
     )
     train_result = trainer.train()
     if cancellation_callback and cancellation_callback.cancelled:

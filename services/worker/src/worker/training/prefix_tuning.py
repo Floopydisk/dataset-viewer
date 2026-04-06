@@ -22,7 +22,7 @@ from worker.training.algorithms import (
 
 _NUM_VIRTUAL_TOKENS = 20
 # PrefixTuningConfig has reliable PEFT support only for generative task types
-_SUPPORTED_TASK_TYPES = frozenset(["seq2seq", "causal-lm", "text-classification"])
+_SUPPORTED_TASK_TYPES = frozenset(["seq2seq", "summarization", "causal-lm", "text-classification"])
 
 
 def _load_prefix_model(model_name: str, task_type: str) -> tuple[Any, int]:
