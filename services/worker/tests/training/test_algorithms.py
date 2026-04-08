@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from datasets import Dataset, DatasetDict
+from datasets.exceptions import DatasetNotFoundError
 from peft import TaskType
 
 from worker.training._base import resolve_output_dir, resolve_task
@@ -265,6 +266,33 @@ def test_load_splits_handles_single_dataset_return() -> None:
 
     assert list(splits) == ["train"]
     assert splits["train"] is ds
+
+
+def test_load_splits_falls_back_to_default_revision_when_requested_revision_missing() -> None:
+    ds = _ds({"text": ["hello"], "label": [0]})
+    missing_revision_error = DatasetNotFoundError("Revision 'v1' doesn't exist for dataset 'dummy' on the Hub.")
+
+    with patch(
+        "worker.training._data.load_dataset",
+        side_effect=[missing_revision_error, DatasetDict({"train": ds})],
+    ) as mocked_load_dataset:
+        splits = load_splits("dummy", "v1", "train", None, None)
+
+    assert list(splits) == ["train"]
+    assert splits["train"] is ds
+    assert mocked_load_dataset.call_count == 2
+    assert mocked_load_dataset.call_args_list[0].kwargs == {"revision": "v1", "split": ["train"]}
+    assert mocked_load_dataset.call_args_list[1].kwargs == {"split": ["train"]}
+
+
+def test_load_splits_does_not_fallback_for_non_revision_dataset_not_found_error() -> None:
+    missing_dataset_error = DatasetNotFoundError("Dataset 'missing-dataset' doesn't exist on the Hub.")
+
+    with patch("worker.training._data.load_dataset", side_effect=missing_dataset_error) as mocked_load_dataset:
+        with pytest.raises(DatasetNotFoundError, match="missing-dataset"):
+            load_splits("missing-dataset", "v1", "train", None, None)
+
+    assert mocked_load_dataset.call_count == 1
 
 
 # ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ import logging
 from typing import Optional
 
 from datasets import Dataset, DatasetDict, load_dataset
+from datasets.exceptions import DatasetNotFoundError
 from transformers import DataCollatorForLanguageModeling, DataCollatorForTokenClassification
 
 # Ordered by preference within each task family
@@ -16,6 +17,18 @@ _SEQ2SEQ_TARGET_CANDIDATES = ("target", "answer", "label", "output", "summary")
 _QA_CONTEXT_CANDIDATES = ("context", "passage", "text")
 _QA_QUESTION_CANDIDATES = ("question", "query")
 _QA_ANSWER_CANDIDATES = ("answers", "answer", "label")
+
+
+def _is_missing_revision_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return (
+        "revision" in message
+        and (
+            "doesn't exist" in message
+            or "not found" in message
+            or "invalid rev id" in message
+        )
+    )
 
 
 def _first_match(candidates: tuple[str, ...], column_names: list[str]) -> Optional[str]:
@@ -339,7 +352,18 @@ def load_splits(
         splits_to_load.append(eval_split)
 
     logging.info(f"Loading dataset {dataset!r} splits={splits_to_load} revision={revision!r}")
-    raw = load_dataset(dataset, revision=revision, split=splits_to_load)  # type: ignore[call-overload]
+    try:
+        raw = load_dataset(dataset, revision=revision, split=splits_to_load)  # type: ignore[call-overload]
+    except DatasetNotFoundError as err:
+        if not _is_missing_revision_error(err):
+            raise
+
+        logging.warning(
+            "Dataset revision %r was not found for %r. Falling back to the dataset default revision.",
+            revision,
+            dataset,
+        )
+        raw = load_dataset(dataset, split=splits_to_load)  # type: ignore[call-overload]
 
     result: DatasetDict = DatasetDict()
     if isinstance(raw, Dataset):
