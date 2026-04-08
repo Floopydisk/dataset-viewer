@@ -97,6 +97,60 @@ def test_train_post_rejects_invalid_revision_before_queueing(client: TestClient)
     assert queue.get_dataset_pending_jobs_for_type(dataset="org/dataset", job_type="dataset-train") == []
 
 
+def test_train_validate_returns_ok_for_valid_hub_revision(client: TestClient) -> None:
+    with patch("api.routes.train._validate_hub_dataset_revision", return_value=None) as mock_validate_revision:
+        response = client.post(
+            "/train/validate",
+            json={
+                "datasetSource": "huggingface",
+                "dataset": "org/dataset",
+                "revision": "main",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is True
+    assert payload["dataset"] == "org/dataset"
+    assert payload["revision"] == "main"
+    mock_validate_revision.assert_called_once()
+
+
+def test_train_validate_rejects_invalid_hub_revision(client: TestClient) -> None:
+    with patch(
+        "api.routes.train._validate_hub_dataset_revision",
+        return_value="Revision 'v1' doesn't exist for dataset 'org/dataset' on the Hub.",
+    ):
+        response = client.post(
+            "/train/validate",
+            json={
+                "datasetSource": "huggingface",
+                "dataset": "org/dataset",
+                "revision": "v1",
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "Revision 'v1' doesn't exist for dataset 'org/dataset' on the Hub."
+
+
+def test_train_validate_skips_hub_lookup_for_local_source(client: TestClient) -> None:
+    with patch("api.routes.train._validate_hub_dataset_revision") as mock_validate_revision:
+        response = client.post(
+            "/train/validate",
+            json={
+                "datasetSource": "local",
+                "revision": "main",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is True
+    assert payload["dataset_source"] == "local"
+    mock_validate_revision.assert_not_called()
+
+
 def test_train_post_rejects_unknown_hyperparameter(client: TestClient) -> None:
     response = client.post(
         "/train",

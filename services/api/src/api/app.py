@@ -36,6 +36,7 @@ from api.routes.train import (
     create_train_endpoint,
     create_train_jobs_endpoint,
     create_train_modal_proxy_endpoint,
+    create_train_validate_endpoint,
 )
 
 
@@ -109,6 +110,28 @@ def create_app_with_config(app_config: AppConfig, endpoint_config: EndpointConfi
             "/api/train/capabilities",
             endpoint=create_train_capabilities_endpoint(),
             methods=["GET"],
+        ),
+        Route(
+            "/train/validate",
+            endpoint=create_train_validate_endpoint(
+                hf_token=app_config.common.hf_token,
+                hf_jwt_public_keys=hf_jwt_public_keys,
+                hf_jwt_algorithm=app_config.api.hf_jwt_algorithm,
+                external_auth_url=app_config.api.external_auth_url,
+                hf_timeout_seconds=app_config.api.hf_timeout_seconds,
+            ),
+            methods=["POST"],
+        ),
+        Route(
+            "/api/train/validate",
+            endpoint=create_train_validate_endpoint(
+                hf_token=app_config.common.hf_token,
+                hf_jwt_public_keys=hf_jwt_public_keys,
+                hf_jwt_algorithm=app_config.api.hf_jwt_algorithm,
+                external_auth_url=app_config.api.external_auth_url,
+                hf_timeout_seconds=app_config.api.hf_timeout_seconds,
+            ),
+            methods=["POST"],
         ),
         Route(
             "/train/jobs",

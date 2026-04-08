@@ -49,6 +49,10 @@ def _parse_local_dataset_reference(dataset: str) -> tuple[str, str]:
     return namespace, dataset_id
 
 
+def _is_non_empty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 def _extract_bearer_token(request: Request) -> Optional[str]:
     authorization = request.headers.get("Authorization", "").strip()
     if not authorization or not authorization.lower().startswith("bearer "):
@@ -117,6 +121,117 @@ def _extract_modal_metadata(source: Mapping[str, Any]) -> dict[str, Any]:
     )
     modal = {field: source[field] for field in modal_fields if field in source and source[field] is not None}
     return modal
+
+
+def create_train_validate_endpoint(
+    *,
+    hf_token: Optional[str] = None,
+    hf_jwt_public_keys: Optional[list[str]] = None,
+    hf_jwt_algorithm: Optional[str] = None,
+    external_auth_url: Optional[str] = None,
+    hf_timeout_seconds: Optional[float] = None,
+) -> Endpoint:
+    async def train_validate_endpoint(request: Request) -> Response:
+        with StepProfiler("train-validate", "endpoint"):
+            try:
+                if request.method != "POST":
+                    return get_json_error_response(
+                        content={"error": "Method not allowed"},
+                        status_code=HTTPStatus.METHOD_NOT_ALLOWED,
+                    )
+
+                try:
+                    body = await request.json()
+                except Exception:
+                    return get_json_error_response(
+                        content={"error": "Invalid JSON body"},
+                        status_code=HTTPStatus.BAD_REQUEST,
+                    )
+
+                if not isinstance(body, Mapping):
+                    return get_json_error_response(
+                        content={"error": "Request body must be a JSON object"},
+                        status_code=HTTPStatus.BAD_REQUEST,
+                    )
+
+                dataset_source_value = body.get("datasetSource", body.get("dataset_source", "huggingface"))
+                if not _is_non_empty_string(dataset_source_value):
+                    return get_json_error_response(
+                        content={"error": "'datasetSource' must be a non-empty string"},
+                        status_code=HTTPStatus.BAD_REQUEST,
+                    )
+                dataset_source = dataset_source_value.strip().lower()
+                if dataset_source not in {"huggingface", "local"}:
+                    return get_json_error_response(
+                        content={"error": "Unsupported datasetSource. Supported: huggingface, local"},
+                        status_code=HTTPStatus.BAD_REQUEST,
+                    )
+
+                revision_value = body.get("revision", "main")
+                if not _is_non_empty_string(revision_value):
+                    return get_json_error_response(
+                        content={"error": "'revision' must be a non-empty string"},
+                        status_code=HTTPStatus.BAD_REQUEST,
+                    )
+                revision = revision_value.strip()
+
+                if dataset_source == "local":
+                    return get_json_ok_response(
+                        content={
+                            "valid": True,
+                            "dataset_source": "local",
+                            "revision": revision,
+                        },
+                        max_age=0,
+                    )
+
+                dataset_value = body.get("dataset")
+                if not _is_non_empty_string(dataset_value):
+                    return get_json_error_response(
+                        content={"error": "'dataset' is required"},
+                        status_code=HTTPStatus.BAD_REQUEST,
+                    )
+                dataset = str(dataset_value).strip()
+
+                await auth_check(
+                    dataset=dataset,
+                    request=request,
+                    external_auth_url=external_auth_url,
+                    hf_jwt_public_keys=hf_jwt_public_keys,
+                    hf_jwt_algorithm=hf_jwt_algorithm,
+                    hf_timeout_seconds=hf_timeout_seconds,
+                )
+
+                revision_error = _validate_hub_dataset_revision(
+                    dataset=dataset,
+                    revision=revision,
+                    request=request,
+                    hf_token=hf_token,
+                    hf_timeout_seconds=hf_timeout_seconds,
+                )
+                if revision_error is not None:
+                    return get_json_error_response(
+                        content={"error": revision_error},
+                        status_code=HTTPStatus.BAD_REQUEST,
+                    )
+
+                return get_json_ok_response(
+                    content={
+                        "valid": True,
+                        "dataset": dataset,
+                        "dataset_source": "huggingface",
+                        "revision": revision,
+                    },
+                    max_age=0,
+                )
+            except Exception as err:
+                logging.error(f"Unexpected error in train validation endpoint: {err}")
+                return get_json_error_response(
+                    content={"error": "Unexpected error", "cause": str(err)},
+                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
+
+    return train_validate_endpoint
 
 
 def _append_modal_proxy_urls(modal: dict[str, Any], dataset: str) -> dict[str, Any]:
