@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from http import HTTPStatus
+from unittest.mock import patch
 
 from libcommon.queue.jobs import Queue
 from libcommon.simple_cache import upsert_response
@@ -72,6 +73,28 @@ def test_train_post_rejects_invalid_hyperparameter(client: TestClient) -> None:
 
     assert response.status_code == 400
     assert "epochs" in response.json()["error"]
+
+
+def test_train_post_rejects_invalid_revision_before_queueing(client: TestClient) -> None:
+    with patch(
+        "api.routes.train._validate_hub_dataset_revision",
+        return_value="Revision 'v1' doesn't exist for dataset 'org/dataset' on the Hub.",
+    ) as mock_validate_revision:
+        response = client.post(
+            "/train",
+            json={
+                "dataset": "org/dataset",
+                "revision": "v1",
+                "modelName": "bert-base-uncased",
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "Revision 'v1' doesn't exist for dataset 'org/dataset' on the Hub."
+    mock_validate_revision.assert_called_once()
+
+    queue = Queue()
+    assert queue.get_dataset_pending_jobs_for_type(dataset="org/dataset", job_type="dataset-train") == []
 
 
 def test_train_post_rejects_unknown_hyperparameter(client: TestClient) -> None:

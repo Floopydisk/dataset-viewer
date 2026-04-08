@@ -10,6 +10,8 @@ from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest
 
+from huggingface_hub import HfApi
+from huggingface_hub.errors import RepositoryNotFoundError, RevisionNotFoundError
 from mongoengine.errors import DoesNotExist
 
 from libapi.authentication import auth_check
@@ -45,6 +47,48 @@ def _parse_local_dataset_reference(dataset: str) -> tuple[str, str]:
     if not namespace or not dataset_id:
         raise ValueError("Invalid local dataset reference")
     return namespace, dataset_id
+
+
+def _extract_bearer_token(request: Request) -> Optional[str]:
+    authorization = request.headers.get("Authorization", "").strip()
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization[7:].strip()
+    return token or None
+
+
+def _validate_hub_dataset_revision(
+    *,
+    dataset: str,
+    revision: str,
+    request: Request,
+    hf_token: Optional[str],
+    hf_timeout_seconds: Optional[float],
+) -> Optional[str]:
+    token = _extract_bearer_token(request) or hf_token
+    timeout_seconds = hf_timeout_seconds if hf_timeout_seconds is not None else 10.0
+    api = HfApi()
+
+    try:
+        api.dataset_info(repo_id=dataset, revision=revision, token=token, timeout=timeout_seconds)
+    except RevisionNotFoundError:
+        return (
+            f"Revision '{revision}' doesn't exist for dataset '{dataset}' on the Hub. "
+            "Use a valid branch, tag, or commit SHA."
+        )
+    except RepositoryNotFoundError:
+        return f"Dataset '{dataset}' was not found on the Hub."
+    except Exception as err:
+        # Do not block queueing on transient Hub API failures.
+        logging.warning(
+            "Could not validate dataset revision before queueing training: dataset=%r revision=%r error=%s",
+            dataset,
+            revision,
+            err,
+        )
+        return None
+
+    return None
 
 
 def _extract_modal_metadata(source: Mapping[str, Any]) -> dict[str, Any]:
@@ -372,6 +416,18 @@ def create_train_endpoint(
                             hf_jwt_algorithm=hf_jwt_algorithm,
                             hf_timeout_seconds=hf_timeout_seconds,
                         )
+                        revision_error = _validate_hub_dataset_revision(
+                            dataset=train_request["dataset"],
+                            revision=train_request["revision"],
+                            request=request,
+                            hf_token=hf_token,
+                            hf_timeout_seconds=hf_timeout_seconds,
+                        )
+                        if revision_error is not None:
+                            return get_json_error_response(
+                                content={"error": revision_error},
+                                status_code=HTTPStatus.BAD_REQUEST,
+                            )
 
                     active_training_job = JobDocument.objects(
                         type="dataset-train", status__in=[Status.WAITING, Status.STARTED]
