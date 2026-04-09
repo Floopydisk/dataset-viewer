@@ -964,4 +964,16 @@ if __name__ == "__main__":
                 launch_kwargs["root_path"] = configured_root_path
         except Exception:
             pass
-    demo.launch(**launch_kwargs)
+
+    try:
+        demo.launch(**launch_kwargs)
+    except ValueError as err:
+        message = str(err)
+        # Gradio can fail this check behind reverse proxies even though traffic is reachable.
+        if "localhost is not accessible" in message and not launch_kwargs.get("share", False):
+            fallback_kwargs = dict(launch_kwargs)
+            fallback_kwargs["share"] = True
+            print("Retrying Gradio launch with share=True because localhost accessibility check failed.")
+            demo.launch(**fallback_kwargs)
+        else:
+            raise
