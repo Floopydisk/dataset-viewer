@@ -6,6 +6,7 @@ from typing import Any, Optional, TypedDict
 
 
 class TrainingParameters(TypedDict):
+    experiment_type: Optional[str]
     model_name: str
     epochs: int
     batch_size: int
@@ -60,8 +61,26 @@ SUPPORTED_TRAINING_ALGORITHMS: frozenset[str] = frozenset(
     }
 )
 
+SUPPORTED_EXPERIMENT_TYPES: frozenset[str] = frozenset(
+    {
+        "baseline",
+        "ablation",
+        "comparison",
+        "smoke-test",
+    }
+)
+
+_LINEAR_PROBING_SUPPORTED_TASKS: frozenset[str] = frozenset(
+    {"text-classification", "token-classification"}
+)
+_PREFIX_PROMPT_SUPPORTED_TASKS: frozenset[str] = frozenset(
+    {"seq2seq", "summarization", "causal-lm", "text-classification"}
+)
+
 
 _TRAIN_PARAM_ALIASES = {
+    "experimentType": "experiment_type",
+    "experiment_type": "experiment_type",
     "modelName": "model_name",
     "model_name": "model_name",
     "epochs": "epochs",
@@ -94,6 +113,85 @@ _TRAIN_PARAM_ALIASES = {
 
 SUPPORTED_TRAINING_DATASET_SOURCES: frozenset[str] = frozenset({"huggingface", "local"})
 SUPPORTED_LOCAL_DATASET_FORMATS: frozenset[str] = frozenset({"csv", "json", "jsonl", "parquet"})
+
+
+def _validate_no_whitespace(value: str, field_name: str) -> str:
+    if any(char.isspace() for char in value):
+        raise TrainValidationError(f"'{field_name}' cannot contain spaces")
+    return value
+
+
+def _validate_revision(value: str) -> str:
+    revision = value.strip()
+    if not revision:
+        raise TrainValidationError("'revision' must be a non-empty string")
+    if len(revision) > 128:
+        raise TrainValidationError("'revision' must be at most 128 characters")
+    _validate_no_whitespace(revision, "revision")
+    if revision.startswith("/") or revision.endswith("/"):
+        raise TrainValidationError("'revision' cannot start or end with '/'")
+    return revision
+
+
+def _validate_split_name(value: str, field_name: str) -> str:
+    split = value.strip()
+    if not split:
+        raise TrainValidationError(f"'{field_name}' must be a non-empty string")
+    if len(split) > 128:
+        raise TrainValidationError(f"'{field_name}' must be at most 128 characters")
+    _validate_no_whitespace(split, field_name)
+    return split
+
+
+def _is_model_task_compatible(model_name: str, task_type: str) -> bool:
+    normalized_model = model_name.strip().lower()
+    if not normalized_model:
+        return False
+
+    causal_markers = (
+        "gpt",
+        "llama",
+        "mistral",
+        "mixtral",
+        "qwen",
+        "falcon",
+        "gemma",
+        "phi",
+        "opt",
+        "bloom",
+        "rwkv",
+    )
+    seq2seq_markers = (
+        "t5",
+        "bart",
+        "pegasus",
+        "mbart",
+        "flan",
+    )
+
+    is_causal_model = any(marker in normalized_model for marker in causal_markers)
+    is_seq2seq_model = any(marker in normalized_model for marker in seq2seq_markers)
+
+    if task_type == "causal-lm":
+        return is_causal_model
+    if task_type in {"seq2seq", "summarization"}:
+        return is_seq2seq_model
+    if task_type == "question-answering":
+        return not is_causal_model
+    return True
+
+
+def _validate_algorithm_task_compatibility(task_type: str, training_algorithm: Optional[str]) -> None:
+    if training_algorithm == "linear-probing" and task_type not in _LINEAR_PROBING_SUPPORTED_TASKS:
+        raise TrainValidationError(
+            "Linear probing supports only text-classification and token-classification tasks. "
+            f"Received taskType '{task_type}'."
+        )
+    if training_algorithm in {"prefix-tuning", "prompt-tuning"} and task_type not in _PREFIX_PROMPT_SUPPORTED_TASKS:
+        raise TrainValidationError(
+            f"{training_algorithm} does not support taskType '{task_type}'. "
+            f"Supported: {sorted(_PREFIX_PROMPT_SUPPORTED_TASKS)}"
+        )
 
 
 def _is_non_empty_string(value: Any) -> bool:
@@ -161,9 +259,25 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
             continue
         normalized[canonical_key] = value
 
+    experiment_type_value = normalized.get("experiment_type")
+    experiment_type: Optional[str]
+    if experiment_type_value is None:
+        experiment_type = None
+    else:
+        if not _is_non_empty_string(experiment_type_value):
+            raise TrainValidationError("'experimentType' must be a non-empty string")
+        experiment_type = experiment_type_value.strip().lower()
+        if experiment_type not in SUPPORTED_EXPERIMENT_TYPES:
+            supported = ", ".join(sorted(SUPPORTED_EXPERIMENT_TYPES))
+            raise TrainValidationError(
+                f"Unsupported experimentType '{experiment_type}'. Supported: {supported}"
+            )
+
     model_name = normalized.get("model_name", DEFAULT_MODEL_NAME)
     if not _is_non_empty_string(model_name):
         raise TrainValidationError("'modelName' must be a non-empty string")
+    if len(model_name.strip()) > 200:
+        raise TrainValidationError("'modelName' must be at most 200 characters")
 
     epochs = _to_bounded_int(normalized.get("epochs", DEFAULT_EPOCHS), "epochs", min_value=1, max_value=100)
     batch_size = _to_bounded_int(
@@ -205,6 +319,7 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
     train_split_value = normalized.get("train_split", "train")
     if not _is_non_empty_string(train_split_value):
         raise TrainValidationError("'trainSplit' must be a non-empty string")
+    train_split = _validate_split_name(train_split_value, "trainSplit")
 
     eval_split_value = normalized.get("eval_split")
     eval_split: Optional[str]
@@ -213,7 +328,7 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
     else:
         if not _is_non_empty_string(eval_split_value):
             raise TrainValidationError("'evalSplit' must be a non-empty string")
-        eval_split = eval_split_value.strip()
+        eval_split = _validate_split_name(eval_split_value, "evalSplit")
 
     max_samples_value = normalized.get("max_samples")
     max_samples: Optional[int]
@@ -230,6 +345,15 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
         if not _is_non_empty_string(experiment_name_value):
             raise TrainValidationError("'experimentName' must be a non-empty string")
         experiment_name = experiment_name_value.strip()
+        if len(experiment_name) > 120:
+            raise TrainValidationError("'experimentName' must be at most 120 characters")
+
+    _validate_algorithm_task_compatibility(task_type=task_type, training_algorithm=training_algorithm)
+    if not _is_model_task_compatible(model_name=model_name.strip(), task_type=task_type):
+        raise TrainValidationError(
+            f"Model '{model_name.strip()}' is not compatible with taskType '{task_type}'. "
+            "Pick a model that matches the selected task."
+        )
 
     local_dataset_id_value = normalized.get("local_dataset_id")
     local_dataset_id: Optional[str]
@@ -264,6 +388,7 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
             )
 
     return {
+        "experiment_type": experiment_type,
         "model_name": model_name.strip(),
         "epochs": epochs,
         "batch_size": batch_size,
@@ -271,7 +396,7 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
         "seed": seed,
         "task_type": task_type,
         "training_algorithm": training_algorithm,
-        "train_split": train_split_value.strip(),
+        "train_split": train_split,
         "eval_split": eval_split,
         "max_samples": max_samples,
         "experiment_name": experiment_name,
@@ -302,6 +427,7 @@ def parse_training_request(body: Mapping[str, Any], dataset_query: Optional[str]
     revision_value = body.get("revision", "main")
     if not _is_non_empty_string(revision_value):
         raise TrainValidationError("'revision' must be a non-empty string")
+    revision = _validate_revision(revision_value)
 
     training_payload = {
         key: value
@@ -318,6 +444,12 @@ def parse_training_request(body: Mapping[str, Any], dataset_query: Optional[str]
             else:
                 raise TrainValidationError("'localDatasetId' is required when datasetSource is 'local'")
             params_dict["local_dataset_id"] = local_dataset_id
+        eval_split = params_dict.get("eval_split")
+        train_split = params_dict.get("train_split")
+        if eval_split and eval_split != train_split:
+            raise TrainValidationError(
+                "For local datasets, 'evalSplit' must be empty or equal to 'trainSplit'."
+            )
         dataset = f"local://pending/{local_dataset_id}"
     else:
         if not _is_non_empty_string(dataset):
@@ -325,6 +457,6 @@ def parse_training_request(body: Mapping[str, Any], dataset_query: Optional[str]
 
     return {
         "dataset": dataset.strip(),
-        "revision": revision_value.strip(),
+        "revision": revision,
         "params_dict": params_dict,
     }
