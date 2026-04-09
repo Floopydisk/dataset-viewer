@@ -46,6 +46,19 @@ dev-stop:
 e2e:
 	$(MAKE) -C e2e/ e2e
 
+PYTEST_ARGS ?=
+PYTEST_LOCAL_KEEP_MONGO ?= false
+PYTEST_LOCAL_NO_INSTALL ?= false
+PYTEST_LOCAL_FLAGS := $(if $(filter true,$(PYTEST_LOCAL_KEEP_MONGO)),--keep-mongo,) $(if $(filter true,$(PYTEST_LOCAL_NO_INSTALL)),--no-install,)
+
+.PHONY: pytest-local-libcommon
+pytest-local-libcommon:
+	bash ./tools/pytest-local.sh $(PYTEST_LOCAL_FLAGS) libcommon $(PYTEST_ARGS)
+
+.PHONY: pytest-local-api
+pytest-local-api:
+	bash ./tools/pytest-local.sh $(PYTEST_LOCAL_FLAGS) api $(PYTEST_ARGS)
+
 # for install, quality checks and tests of every job, lib, service or worker, see the Makefile in the corresponding folder
 
 .PHONY: install

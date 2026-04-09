@@ -201,6 +201,38 @@ make install
 
 It will create a virtual environment in a `./.venv/` subdirectory.
 
+### Run pytest locally (without full deploy)
+
+Use the helper script from the repo root to run package tests with local Mongo dependencies:
+
+```bash
+make pytest-local-libcommon PYTEST_ARGS="tests/test_train.py -q"
+make pytest-local-api PYTEST_ARGS="tests/routes/test_train.py -q"
+```
+
+For faster repeated runs, keep Mongo alive between invocations:
+
+```bash
+make pytest-local-libcommon PYTEST_LOCAL_KEEP_MONGO=true PYTEST_ARGS="tests/test_train.py -q"
+```
+
+If dependencies are already installed, skip install checks:
+
+```bash
+make pytest-local-api PYTEST_LOCAL_NO_INSTALL=true PYTEST_ARGS="tests/routes/test_train.py -q"
+```
+
+Equivalent direct commands:
+
+```bash
+tools/pytest-local.sh libcommon tests/test_train.py -q
+tools/pytest-local.sh api tests/routes/test_train.py -q
+tools/pytest-local.sh --keep-mongo libcommon tests/test_train.py -q
+tools/pytest-local.sh --no-install api tests/routes/test_train.py -q
+```
+
+The helper starts/stops `tools/docker-compose-mongo.yml`, sets test Mongo URLs, and runs pytest through Poetry in the selected component.
+
 If you use VSCode, it might be useful to use the ["monorepo" workspace](./.vscode/monorepo.code-workspace) (see a [blogpost](https://medium.com/rewrite-tech/visual-studio-code-tips-for-monorepo-development-with-multi-root-workspaces-and-extension-6b69420ecd12) for more explanations). It is a multi-root workspace, with one folder for each library and service (note that we hide them from the ROOT to avoid editing there). Each folder has its own Python interpreter, with access to the dependencies installed by Poetry. You might have to manually select the interpreter in every folder though on first access, then VSCode stores the information in its local storage.
 
 ## Architecture
@@ -249,7 +281,6 @@ The application also has optional components:
 - an admin server to serve technical endpoints
 - a shared directory for the assets and cached-assets in [S3](https://aws.amazon.com/s3/) (It can be configured to point to a local storage instead)
 - a shared storage for temporal files created by the workers in [EFS](https://aws.amazon.com/efs/) (It can be configured to point to a local storage instead)
-
 
 The following environments contain all the modules: reverse proxy, API server, admin API server, workers, and the Mongo database.
 
