@@ -30,6 +30,7 @@ def test_train_post_queues_job_with_normalized_params(client: TestClient) -> Non
     assert payload["poll"]["params"]["dataset"] == "org/dataset"
     assert payload["poll"]["params"]["job_id"] == payload["job_id"]
     assert payload["params"] == {
+        "experiment_type": None,
         "model_name": "bert-base-uncased",
         "epochs": 4,
         "batch_size": 8,
