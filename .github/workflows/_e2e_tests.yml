@@ -21,7 +21,7 @@ jobs:
     runs-on: "ubuntu-latest"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - name: Build and launch the services (no cache)
         env:
           ADMIN_UVICORN_NUM_WORKERS: "2"
@@ -53,8 +53,8 @@ jobs:
           MONGO_PORT: ${{ env.mongo-port }}
           MONGO_REPLICASET: ${{ env.replicaset }}
           COMMON_BLOCKED_DATASETS: "DVUser/blocked-*"
-          ADMIN_HF_ORGANIZATION: "valid_org"
-          E2E_ADMIN_USER_TOKEN: "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"
+          ADMIN_HF_ORGANIZATION: "DVAdminsOrg"
+          E2E_ADMIN_USER_TOKEN: "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"
           # the containers need to access S3 and Cloudfront
           ASSETS_BASE_URL: "https://datasets-server-test.us.dev.moon.huggingface.tech/assets"
           ASSETS_STORAGE_PROTOCOL: "s3"
@@ -71,7 +71,7 @@ jobs:
       - name: Install poetry
         run: pipx install poetry==${{ env.poetry-version }}
       - name: Use Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: ${{ env.python-version }}
           cache: "poetry"
@@ -110,7 +110,7 @@ jobs:
           PROMETHEUS_MULTIPROC_DIR: "/tmp"
           WORKER_SLEEP_SECONDS: "1"
           COMMON_BLOCKED_DATASETS: "DVUser/blocked-*"
-          ADMIN_HF_ORGANIZATION: "valid_org"
-          E2E_ADMIN_USER_TOKEN: "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"
+          ADMIN_HF_ORGANIZATION: "DVAdminsOrg"
+          E2E_ADMIN_USER_TOKEN: "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"
         run: |
           poetry run python -m pytest -vv -s tests
