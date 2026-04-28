@@ -29,6 +29,12 @@ class TrainingExecutionContext(TypedDict):
     local_dataset_format: Optional[str]
     cancellation_checker: Optional[Callable[[], bool]]
     progress_callback: Optional[Callable[[Mapping[str, Any]], None]]
+    # Optional resource allocation overrides
+    use_gpu: Optional[bool]
+    gpu_count: Optional[int]
+    gpu_type: Optional[str]
+    cpu_cores: Optional[int]
+    memory_gb: Optional[int]
 
 
 class TrainingAlgorithmResult(TypedDict):

@@ -21,6 +21,12 @@ class TrainingParameters(TypedDict):
     local_dataset_id: Optional[str]
     local_dataset_path: Optional[str]
     local_dataset_format: Optional[str]
+    # Resource allocation
+    use_gpu: Optional[bool]
+    gpu_count: Optional[int]
+    gpu_type: Optional[str]
+    cpu_cores: Optional[int]
+    memory_gb: Optional[int]
 
 
 class TrainingRequest(TypedDict):
@@ -110,6 +116,15 @@ _TRAIN_PARAM_ALIASES = {
     "datasetSource": "dataset_source",
     "dataset_source": "dataset_source",
 }
+
+# Resource-related aliases (frontend uses camelCase)
+_TRAIN_PARAM_ALIASES.update({
+    "useGPU": "use_gpu",
+    "gpuCount": "gpu_count",
+    "gpuType": "gpu_type",
+    "cpuCores": "cpu_cores",
+    "memoryGb": "memory_gb",
+})
 
 SUPPORTED_TRAINING_DATASET_SOURCES: frozenset[str] = frozenset({"huggingface", "local"})
 SUPPORTED_LOCAL_DATASET_FORMATS: frozenset[str] = frozenset({"csv", "json", "jsonl", "parquet"})
@@ -217,6 +232,30 @@ def _to_bounded_int(value: Any, field_name: str, min_value: int, max_value: int)
     if parsed < min_value or parsed > max_value:
         raise TrainValidationError(f"'{field_name}' must be between {min_value} and {max_value}")
     return parsed
+
+
+def _validate_resource_allocation(normalized: dict[str, Any]) -> None:
+    # use_gpu can be None or truthy; coerce booleans handled at caller if needed
+    use_gpu = normalized.get("use_gpu")
+    if use_gpu:
+        gpu_count = normalized.get("gpu_count")
+        if gpu_count is None:
+            raise TrainValidationError("'gpuCount' is required when 'useGPU' is true")
+        normalized["gpu_count"] = _to_bounded_int(gpu_count, "gpuCount", 1, 64)
+        gpu_type = normalized.get("gpu_type")
+        if gpu_type is not None:
+            if not _is_non_empty_string(gpu_type):
+                raise TrainValidationError("'gpuType' must be a non-empty string")
+            if len(gpu_type.strip()) > 100:
+                raise TrainValidationError("'gpuType' must be at most 100 characters")
+
+    cpu_cores = normalized.get("cpu_cores")
+    if cpu_cores is not None:
+        normalized["cpu_cores"] = _to_bounded_int(cpu_cores, "cpuCores", 1, 256)
+
+    memory_gb = normalized.get("memory_gb")
+    if memory_gb is not None:
+        normalized["memory_gb"] = _to_bounded_int(memory_gb, "memoryGb", 1, 4096)
 
 
 def _to_bounded_float(value: Any, field_name: str, min_value: float, max_value: float) -> float:
@@ -387,6 +426,9 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
                 f"Unsupported localDatasetFormat '{local_dataset_format}'. Supported: {supported}"
             )
 
+    # Validate resource allocation params (gpu/cpu/memory)
+    _validate_resource_allocation(normalized)
+
     return {
         "experiment_type": experiment_type,
         "model_name": model_name.strip(),
@@ -403,6 +445,11 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
         "local_dataset_id": local_dataset_id,
         "local_dataset_path": local_dataset_path,
         "local_dataset_format": local_dataset_format,
+        "use_gpu": normalized.get("use_gpu"),
+        "gpu_count": normalized.get("gpu_count"),
+        "gpu_type": normalized.get("gpu_type"),
+        "cpu_cores": normalized.get("cpu_cores"),
+        "memory_gb": normalized.get("memory_gb"),
     }
 
 

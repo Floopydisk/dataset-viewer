@@ -56,12 +56,34 @@ def _select_gpu_instance_class(context: TrainingExecutionContext, training_algor
 
 
 def _build_compute_profile(context: TrainingExecutionContext, training_algorithm: str) -> dict[str, Any]:
-    gpu_instance_class = _select_gpu_instance_class(context=context, training_algorithm=training_algorithm)
-    return {
-        "provider": "nvidia",
-        "gpu": gpu_instance_class,
-        "gpu_count": 1,
-    }
+    # Prefer explicit user-provided resource allocation when present.
+    # Accept fields: use_gpu, gpu_count, gpu_type, cpu_cores, memory_gb
+    use_gpu = context.get("use_gpu")
+    explicit_gpu_count = context.get("gpu_count")
+    explicit_gpu_type = context.get("gpu_type")
+    explicit_cpu_cores = context.get("cpu_cores")
+    explicit_memory_gb = context.get("memory_gb")
+
+    # If explicit GPU preferences exist or use_gpu requested, build an NVIDIA profile.
+    if (use_gpu is True) or (explicit_gpu_count is not None and int(explicit_gpu_count) > 0):
+        gpu_count = int(explicit_gpu_count) if explicit_gpu_count is not None else 1
+        if explicit_gpu_type and isinstance(explicit_gpu_type, str) and explicit_gpu_type.strip():
+            gpu = explicit_gpu_type.strip().upper()
+        else:
+            gpu = _select_gpu_instance_class(context=context, training_algorithm=training_algorithm)
+        return {
+            "provider": "nvidia",
+            "gpu": gpu,
+            "gpu_count": gpu_count,
+        }
+
+    # Otherwise, prefer CPU-only profile and include cpu/memory hints when provided.
+    profile: dict[str, Any] = {"provider": "cpu"}
+    if explicit_cpu_cores is not None:
+        profile["cpu_cores"] = int(explicit_cpu_cores)
+    if explicit_memory_gb is not None:
+        profile["memory_gb"] = int(explicit_memory_gb)
+    return profile
 
 
 def _render_url_template(url_template: str, run_id: str) -> str:
@@ -233,9 +255,17 @@ def run_training_on_modal(
         "structured_model_path": structured_model_path,
         "execution_backend": "modal",
         "modal_auto_shutdown": True,
-        "modal_gpu": compute_profile["gpu"],
-        "modal_gpu_count": compute_profile["gpu_count"],
     }
+    if isinstance(compute_profile, Mapping) and compute_profile.get("provider") == "nvidia":
+        runtime_metadata["modal_gpu"] = compute_profile.get("gpu")
+        runtime_metadata["modal_gpu_count"] = compute_profile.get("gpu_count")
+    else:
+        # Expose CPU hints when no GPU is requested
+        if isinstance(compute_profile, Mapping):
+            if compute_profile.get("cpu_cores") is not None:
+                runtime_metadata["modal_cpu_cores"] = compute_profile.get("cpu_cores")
+            if compute_profile.get("memory_gb") is not None:
+                runtime_metadata["modal_memory_gb"] = compute_profile.get("memory_gb")
     if run_id:
         runtime_metadata["modal_run_id"] = run_id
         if modal_config.logs_url_template:
@@ -406,8 +436,15 @@ def run_training_on_modal(
     artifacts.setdefault("structured_model_path", structured_model_path)
     artifacts.setdefault("execution_backend", "modal")
     artifacts.setdefault("modal_auto_shutdown", True)
-    artifacts.setdefault("modal_gpu", compute_profile["gpu"])
-    artifacts.setdefault("modal_gpu_count", compute_profile["gpu_count"])
+    if isinstance(compute_profile, Mapping) and compute_profile.get("provider") == "nvidia":
+        artifacts.setdefault("modal_gpu", compute_profile.get("gpu"))
+        artifacts.setdefault("modal_gpu_count", compute_profile.get("gpu_count"))
+    else:
+        if isinstance(compute_profile, Mapping):
+            if compute_profile.get("cpu_cores") is not None:
+                artifacts.setdefault("modal_cpu_cores", compute_profile.get("cpu_cores"))
+            if compute_profile.get("memory_gb") is not None:
+                artifacts.setdefault("modal_memory_gb", compute_profile.get("memory_gb"))
     artifacts.setdefault("modal_remote_status", status or "unknown")
     if isinstance(result.get("message"), str):
         artifacts.setdefault("modal_remote_message", str(result["message"]))

@@ -28,3 +28,4 @@ server.sh
 .env.debug
 .amazonq/
 data-viewer-frontend/
+aws

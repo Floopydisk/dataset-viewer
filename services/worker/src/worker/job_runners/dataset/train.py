@@ -106,6 +106,17 @@ class DatasetTrainJobRunner(DatasetJobRunner):
             "local_dataset_format": local_dataset_format,
             "cancellation_checker": lambda: Queue().is_job_cancellation_requested(self.job_info["job_id"]),
         }
+        # Pass through resource allocation if present in training params
+        if "use_gpu" in training_params:
+            context["use_gpu"] = training_params.get("use_gpu")
+        if "gpu_count" in training_params:
+            context["gpu_count"] = training_params.get("gpu_count")
+        if "gpu_type" in training_params:
+            context["gpu_type"] = training_params.get("gpu_type")
+        if "cpu_cores" in training_params:
+            context["cpu_cores"] = training_params.get("cpu_cores")
+        if "memory_gb" in training_params:
+            context["memory_gb"] = training_params.get("memory_gb")
 
         if self.app_config.modal_training.execution_backend == "modal":
             # Ensure every training job goes through Modal when modal backend is enabled.

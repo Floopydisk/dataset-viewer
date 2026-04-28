@@ -110,7 +110,7 @@ def _structured_model_path(payload: Mapping[str, Any]) -> str:
 
 def _run_artifacts(base_url: str, run_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     structured_model_path = _structured_model_path(payload)
-    return {
+    artifacts: dict[str, Any] = {
         "structured_model_path": structured_model_path,
         "execution_backend": "modal",
         "modal_auto_shutdown": True,
@@ -122,12 +122,58 @@ def _run_artifacts(base_url: str, run_id: str, payload: Mapping[str, Any]) -> di
         "modal_checkpoint_mount_path": CHECKPOINT_VOLUME_MOUNT_PATH,
     }
 
+    # Include orchestration hints if provided by the request payload.
+    orchestration = payload.get("orchestration")
+    if isinstance(orchestration, Mapping):
+        compute = orchestration.get("compute")
+        if isinstance(compute, Mapping):
+            gpu_count = compute.get("gpu_count")
+            if isinstance(gpu_count, (int, float, str)):
+                try:
+                    artifacts["modal_gpu_count"] = int(gpu_count)
+                except Exception:
+                    pass
+            cpu_cores = compute.get("cpu_cores")
+            if isinstance(cpu_cores, (int, float, str)):
+                try:
+                    artifacts["modal_cpu_cores"] = int(cpu_cores)
+                except Exception:
+                    pass
+            memory_gb = compute.get("memory_gb")
+            if isinstance(memory_gb, (int, float, str)):
+                try:
+                    artifacts["modal_memory_gb"] = float(memory_gb)
+                except Exception:
+                    pass
+
+    return artifacts
+
 
 def _initial_state(base_url: str, run_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     artifacts = _run_artifacts(base_url, run_id, payload)
     gpu_class = _resolve_gpu_class(payload)
     artifacts.setdefault("modal_gpu", gpu_class)
-    artifacts.setdefault("modal_gpu_count", 1)
+    # Default GPU count is 1 unless overridden in payload orchestration.compute
+    if "modal_gpu_count" not in artifacts:
+        artifacts.setdefault("modal_gpu_count", 1)
+
+    # Expose cpu/memory hints at run creation if provided.
+    orchestration = payload.get("orchestration")
+    if isinstance(orchestration, Mapping):
+        compute = orchestration.get("compute")
+        if isinstance(compute, Mapping):
+            cpu_cores = compute.get("cpu_cores")
+            if isinstance(cpu_cores, (int, float, str)) and "modal_cpu_cores" not in artifacts:
+                try:
+                    artifacts.setdefault("modal_cpu_cores", int(cpu_cores))
+                except Exception:
+                    pass
+            memory_gb = compute.get("memory_gb")
+            if isinstance(memory_gb, (int, float, str)) and "modal_memory_gb" not in artifacts:
+                try:
+                    artifacts.setdefault("modal_memory_gb", float(memory_gb))
+                except Exception:
+                    pass
     return {
         "run_id": run_id,
         "status": "queued",
