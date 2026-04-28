@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 The HuggingFace Authors.
+# Copyright 2024 The HuggingFace Authors.
 
 import json
 import time
@@ -179,6 +179,42 @@ def build_structured_model_path(
     )
 
 
+def _extract_runtime_snapshot(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract all known runtime metadata fields from a Modal status/event payload."""
+    snapshot: dict[str, Any] = {"modal_remote_status": _extract_state(result) or "unknown"}
+
+    str_fields = {
+        "message": "modal_remote_message",
+        "updated_at": "modal_remote_updated_at",
+        "finished_at": "modal_remote_finished_at",
+        "stage": "modal_remote_stage",
+        "modal_resume_checkpoint_path": "modal_resume_checkpoint_path",
+    }
+    for src, dst in str_fields.items():
+        value = result.get(src)
+        if isinstance(value, str) and value:
+            snapshot[dst] = value
+
+    numeric_fields = {
+        "training_eta_seconds": "modal_training_eta_seconds",
+        "training_progress_pct": "modal_training_progress_pct",
+    }
+    for src, dst in numeric_fields.items():
+        value = result.get(src)
+        if isinstance(value, (int, float)):
+            snapshot[dst] = float(value)
+
+    submilestones = result.get("training_submilestones")
+    if isinstance(submilestones, list):
+        snapshot["modal_training_submilestones"] = submilestones
+
+    resumed = result.get("modal_resumed_from_checkpoint")
+    if isinstance(resumed, bool):
+        snapshot["modal_resumed_from_checkpoint"] = resumed
+
+    return snapshot
+
+
 def _coerce_metrics(metrics: Mapping[str, Any]) -> dict[str, float]:
     typed_metrics: dict[str, float] = {}
     for key, value in metrics.items():
@@ -300,37 +336,7 @@ def run_training_on_modal(
             for event in stream_events:
                 result = event
                 state = _extract_state(result)
-
-                runtime_snapshot: dict[str, Any] = {
-                    "modal_remote_status": state or "unknown",
-                }
-                message = result.get("message")
-                if isinstance(message, str) and message:
-                    runtime_snapshot["modal_remote_message"] = message
-                updated_at = result.get("updated_at")
-                if isinstance(updated_at, str) and updated_at:
-                    runtime_snapshot["modal_remote_updated_at"] = updated_at
-                finished_at = result.get("finished_at")
-                if isinstance(finished_at, str) and finished_at:
-                    runtime_snapshot["modal_remote_finished_at"] = finished_at
-                stage = result.get("stage")
-                if isinstance(stage, str) and stage:
-                    runtime_snapshot["modal_remote_stage"] = stage
-                eta_seconds = result.get("training_eta_seconds")
-                if isinstance(eta_seconds, (int, float)):
-                    runtime_snapshot["modal_training_eta_seconds"] = float(eta_seconds)
-                progress_pct = result.get("training_progress_pct")
-                if isinstance(progress_pct, (int, float)):
-                    runtime_snapshot["modal_training_progress_pct"] = float(progress_pct)
-                submilestones = result.get("training_submilestones")
-                if isinstance(submilestones, list):
-                    runtime_snapshot["modal_training_submilestones"] = submilestones
-                resumed_from_checkpoint = result.get("modal_resumed_from_checkpoint")
-                if isinstance(resumed_from_checkpoint, bool):
-                    runtime_snapshot["modal_resumed_from_checkpoint"] = resumed_from_checkpoint
-                resume_checkpoint_path = result.get("modal_resume_checkpoint_path")
-                if isinstance(resume_checkpoint_path, str) and resume_checkpoint_path:
-                    runtime_snapshot["modal_resume_checkpoint_path"] = resume_checkpoint_path
+                runtime_snapshot = _extract_runtime_snapshot(result)
 
                 if runtime_snapshot != last_runtime_snapshot:
                     Queue().update_job_params_dict(context["job_id"], runtime_snapshot)
@@ -351,7 +357,10 @@ def run_training_on_modal(
                 if state in TERMINAL_SUCCESS_STATES | TERMINAL_CANCELLED_STATES | TERMINAL_FAILED_STATES:
                     stream_reached_terminal_state = True
                     break
-        except Exception:
+        except TrainingCancelledError:
+            raise
+        except Exception as err:
+            logging.warning("Modal SSE stream failed, falling back to polling: %s", err)
             stream_reached_terminal_state = False
 
         if not stream_reached_terminal_state:
@@ -375,37 +384,7 @@ def run_training_on_modal(
                     method="GET",
                 )
                 state = _extract_state(result)
-
-                runtime_snapshot = {
-                    "modal_remote_status": state or "unknown",
-                }
-                message = result.get("message")
-                if isinstance(message, str) and message:
-                    runtime_snapshot["modal_remote_message"] = message
-                updated_at = result.get("updated_at")
-                if isinstance(updated_at, str) and updated_at:
-                    runtime_snapshot["modal_remote_updated_at"] = updated_at
-                finished_at = result.get("finished_at")
-                if isinstance(finished_at, str) and finished_at:
-                    runtime_snapshot["modal_remote_finished_at"] = finished_at
-                stage = result.get("stage")
-                if isinstance(stage, str) and stage:
-                    runtime_snapshot["modal_remote_stage"] = stage
-                eta_seconds = result.get("training_eta_seconds")
-                if isinstance(eta_seconds, (int, float)):
-                    runtime_snapshot["modal_training_eta_seconds"] = float(eta_seconds)
-                progress_pct = result.get("training_progress_pct")
-                if isinstance(progress_pct, (int, float)):
-                    runtime_snapshot["modal_training_progress_pct"] = float(progress_pct)
-                submilestones = result.get("training_submilestones")
-                if isinstance(submilestones, list):
-                    runtime_snapshot["modal_training_submilestones"] = submilestones
-                resumed_from_checkpoint = result.get("modal_resumed_from_checkpoint")
-                if isinstance(resumed_from_checkpoint, bool):
-                    runtime_snapshot["modal_resumed_from_checkpoint"] = resumed_from_checkpoint
-                resume_checkpoint_path = result.get("modal_resume_checkpoint_path")
-                if isinstance(resume_checkpoint_path, str) and resume_checkpoint_path:
-                    runtime_snapshot["modal_resume_checkpoint_path"] = resume_checkpoint_path
+                runtime_snapshot = _extract_runtime_snapshot(result)
 
                 if runtime_snapshot != last_runtime_snapshot:
                     Queue().update_job_params_dict(context["job_id"], runtime_snapshot)

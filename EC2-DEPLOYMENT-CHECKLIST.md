@@ -1,6 +1,6 @@
 # EC2 Deployment Checklist
 
-Use this checklist to deploy the backend on AWS EC2 with Supabase S3 + MongoDB Atlas.
+Use this checklist to deploy the backend on AWS EC2 with Cloudflare R2 + MongoDB Atlas.
 
 ## Pre-Launch Checklist
 
@@ -11,10 +11,10 @@ Use this checklist to deploy the backend on AWS EC2 with Supabase S3 + MongoDB A
   - [ ] Database user created
   - [ ] Connection string copied
   - [ ] IP allowlist includes `0.0.0.0/0` (or your EC2 IP after launch)
-- [ ] **Supabase Account** created, S3 credentials enabled
+- [ ] **Cloudflare Account** created, R2 bucket and S3 credentials enabled
   - [ ] S3 access key + secret saved
-  - [ ] Project reference noted
-  - [ ] S3 bucket created (e.g., `dataset-viewer`)
+  - [ ] Account endpoint noted
+  - [ ] R2 bucket created (e.g., `models`)
 - [ ] **EC2 Key Pair** downloaded and saved locally
 - [ ] `.env.production` file prepared locally
 - [ ] `aws-ec2-launch.sh` permissions set: `chmod +x aws-ec2-launch.sh`
@@ -35,6 +35,7 @@ Use this checklist to deploy the backend on AWS EC2 with Supabase S3 + MongoDB A
 - [ ] **Instance Launched** - note public IP
 
 ### Wait for Instance
+
 - [ ] Instance running (check AWS console)
 - [ ] Status checks passed (2/2)
 - [ ] Wait 3-5 minutes for Docker/git to finish setup
@@ -44,21 +45,27 @@ Use this checklist to deploy the backend on AWS EC2 with Supabase S3 + MongoDB A
 ### Fill in `.env.production`
 
 MongoDB section:
+
 - [ ] `CACHE_MONGO_URL` = full Atlas connection string
 - [ ] `QUEUE_MONGO_URL` = same as above
 
-Supabase S3 section:
-- [ ] `S3_ACCESS_KEY_ID` = from Supabase Storage
-- [ ] `S3_SECRET_ACCESS_KEY` = from Supabase Storage
-- [ ] `S3_ENDPOINT_URL` = https://PROJECT_REF.storage.supabase.co/storage/v1/s3
-- [ ] `ASSETS_STORAGE_ROOT` = bucket-name/assets
-- [ ] `CACHED_ASSETS_STORAGE_ROOT` = bucket-name/cached-assets
+Cloudflare R2 S3 section:
+
+- [ ] `S3_ACCESS_KEY_ID` = from Cloudflare R2
+- [ ] `S3_SECRET_ACCESS_KEY` = from Cloudflare R2
+- [ ] `S3_REGION_NAME` = auto
+- [ ] `S3_ENDPOINT_URL` = https://<account-id>.r2.cloudflarestorage.com
+- [ ] `ASSETS_STORAGE_ROOT` = models/assets
+- [ ] `CACHED_ASSETS_STORAGE_ROOT` = models/cached-assets
+- [ ] `LOCAL_DATASETS_STORAGE_ROOT` = models/local-datasets
 
 Public URLs:
+
 - [ ] `ASSETS_BASE_URL` = http://EC2_PUBLIC_IP/assets
 - [ ] `CACHED_ASSETS_BASE_URL` = http://EC2_PUBLIC_IP/cached-assets
 
 Optional auth:
+
 - [ ] `COMMON_HF_TOKEN` = (leave empty if not using gated datasets)
 - [ ] `COMMITTER_HF_TOKEN` = (leave empty if not pushing parquet to Hub)
 
@@ -139,15 +146,17 @@ docker stats
 ## Done! ✨
 
 Your dataset viewer backend is live at:
+
 - **Public API**: `http://EC2_PUBLIC_IP`
 - **Healthcheck**: `http://EC2_PUBLIC_IP/healthcheck`
 
 Rough monthly costs:
+
 - EC2 t3.small: $7
 - Storage: $2
 - Data transfer: $5-10
 - MongoDB Atlas (optional paid tier): $0-9
-- Supabase S3: $5-20 (usage-based)
+- Cloudflare R2: $5-20 (usage-based)
 - **Total: ~$20-48/mo**
 
 ---

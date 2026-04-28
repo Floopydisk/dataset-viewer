@@ -58,17 +58,17 @@ Set environment variables to configure the job queues to precompute API response
 
 ## S3 configuration
 
-Set environment variables to configure the connection to S3.
+Set environment variables to configure the connection to S3-compatible storage such as Cloudflare R2.
 
-- `S3_REGION_NAME`: bucket region name when using `s3` as storage protocol for assets or cached assets. Defaults to `us-east-1`.
+- `S3_REGION_NAME`: bucket region name when using `s3` as storage protocol for assets or cached assets. For Cloudflare R2, use `auto`. Defaults to `us-east-1`.
 - `S3_ACCESS_KEY_ID`: unique identifier associated with an AWS account. It's used to identify the AWS account that is making requests to S3. Defaults to empty.
 - `S3_SECRET_ACCESS_KEY`: secret key associated with an AWS account. Defaults to empty.
-- `S3_ENDPOINT_URL`: S3-compatible endpoint URL (for example Supabase Storage S3 endpoint). Defaults to empty.
+- `S3_ENDPOINT_URL`: S3-compatible endpoint URL (for example a Cloudflare R2 account endpoint). Defaults to empty.
 - `S3_ADDRESSING_STYLE`: optional S3 addressing style (`path` or `virtual`). Defaults to empty.
 
 ## Parquet Metadata
 
-- `PARQUET_METADATA_STORAGE_DIRECTORY`: storage directory where parquet metadata files are stored. See https://arrow.apache.org/docs/python/generated/pyarrow.parquet.FileMetaData.html for more information. 
+- `PARQUET_METADATA_STORAGE_DIRECTORY`: storage directory where parquet metadata files are stored. See https://arrow.apache.org/docs/python/generated/pyarrow.parquet.FileMetaData.html for more information.
 
 ## Rows Index
 

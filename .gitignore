@@ -29,3 +29,5 @@ server.sh
 .amazonq/
 data-viewer-frontend/
 aws
+
+.github.old/
