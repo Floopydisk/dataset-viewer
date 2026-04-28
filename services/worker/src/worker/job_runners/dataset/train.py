@@ -77,6 +77,10 @@ class DatasetTrainJobRunner(DatasetJobRunner):
         resolved_training_algorithm = training_algorithm
         train_split = training_params["train_split"]
         eval_split = training_params["eval_split"]
+        test_split_ratio = training_params["test_split_ratio"]
+        resolved_eval_split = eval_split
+        if resolved_eval_split is None and test_split_ratio is not None:
+            resolved_eval_split = "test"
         max_samples = training_params["max_samples"]
         experiment_name = training_params["experiment_name"]
         local_dataset_path = training_params["local_dataset_path"]
@@ -96,6 +100,7 @@ class DatasetTrainJobRunner(DatasetJobRunner):
             "task_type": task_type,
             "train_split": train_split,
             "eval_split": eval_split,
+            "test_split_ratio": test_split_ratio,
             "epochs": epochs,
             "batch_size": batch_size,
             "learning_rate": learning_rate,
@@ -174,7 +179,8 @@ class DatasetTrainJobRunner(DatasetJobRunner):
                 "task_type": task_type,
                 "training_algorithm": resolved_training_algorithm,
                 "train_split": train_split,
-                "eval_split": eval_split,
+                "eval_split": resolved_eval_split,
+                "test_split_ratio": test_split_ratio,
                 "max_samples": max_samples,
                 "experiment_name": experiment_name,
                 "epochs": epochs,

@@ -17,6 +17,15 @@ _SEQ2SEQ_TARGET_CANDIDATES = ("target", "answer", "label", "output", "summary")
 _QA_CONTEXT_CANDIDATES = ("context", "passage", "text")
 _QA_QUESTION_CANDIDATES = ("question", "query")
 _QA_ANSWER_CANDIDATES = ("answers", "answer", "label")
+_AUTO_EVAL_SPLIT_NAME = "test"
+
+
+def resolve_eval_split_name(eval_split: Optional[str], test_split_ratio: Optional[float]) -> Optional[str]:
+    if eval_split:
+        return eval_split
+    if test_split_ratio is not None:
+        return _AUTO_EVAL_SPLIT_NAME
+    return None
 
 
 def _is_missing_revision_error(error: Exception) -> bool:
@@ -159,6 +168,14 @@ def ensure_padding_token(tokenizer: object) -> None:
         )
     logging.warning("Tokenizer has no pad_token_id; falling back to eos_token for padding.")
     tokenizer.pad_token = eos_token  # type: ignore[attr-defined]
+
+
+def _split_train_test(dataset: Dataset, test_split_ratio: float, seed: Optional[int]) -> tuple[Dataset, Dataset]:
+    if len(dataset) < 2:
+        raise ValueError("Not enough samples to create a test split.")
+    split_seed = 42 if seed is None else seed
+    split = dataset.train_test_split(test_size=test_split_ratio, seed=split_seed, shuffle=True)
+    return split["train"], split["test"]
 
 
 def _extract_qa_answer(answer_value: object) -> tuple[Optional[str], Optional[int]]:
@@ -315,7 +332,9 @@ def load_splits(
     revision: str,
     train_split: str,
     eval_split: Optional[str],
+    test_split_ratio: Optional[float],
     max_samples: Optional[int],
+    seed: Optional[int] = None,
     local_dataset_path: Optional[str] = None,
     local_dataset_format: Optional[str] = None,
 ) -> DatasetDict:
@@ -342,13 +361,25 @@ def load_splits(
             raw = raw.select(range(min(max_samples, len(raw))))
 
         result: DatasetDict = DatasetDict()
+        if eval_split is None and test_split_ratio is not None:
+            logging.info(
+                "Auto-splitting local dataset train_split=%r test_split_ratio=%s",
+                train_split,
+                test_split_ratio,
+            )
+            train_ds, test_ds = _split_train_test(raw, test_split_ratio, seed)
+            result[train_split] = train_ds
+            result[_AUTO_EVAL_SPLIT_NAME] = test_ds
+            return result
+
         result[train_split] = raw
         if eval_split:
             result[eval_split] = raw
         return result
 
+    auto_split = eval_split is None and test_split_ratio is not None
     splits_to_load = [train_split]
-    if eval_split:
+    if eval_split and not auto_split:
         splits_to_load.append(eval_split)
 
     logging.info(f"Loading dataset {dataset!r} splits={splits_to_load} revision={revision!r}")
@@ -366,6 +397,28 @@ def load_splits(
         raw = load_dataset(dataset, split=splits_to_load)  # type: ignore[call-overload]
 
     result: DatasetDict = DatasetDict()
+    if auto_split:
+        if isinstance(raw, Dataset):
+            raw_train = raw
+        elif isinstance(raw, DatasetDict):
+            raw_train = raw[train_split]
+        else:
+            raw_train = raw[0]
+
+        if max_samples is not None:
+            raw_train = raw_train.select(range(min(max_samples, len(raw_train))))
+
+        logging.info(
+            "Auto-splitting dataset %r train_split=%r test_split_ratio=%s",
+            dataset,
+            train_split,
+            test_split_ratio,
+        )
+        train_ds, test_ds = _split_train_test(raw_train, test_split_ratio, seed)
+        result[train_split] = train_ds
+        result[_AUTO_EVAL_SPLIT_NAME] = test_ds
+        return result
+
     if isinstance(raw, Dataset):
         if len(splits_to_load) != 1:
             raise ValueError("load_dataset returned a single Dataset for multiple requested splits")

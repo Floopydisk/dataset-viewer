@@ -19,6 +19,7 @@ class TrainingExecutionContext(TypedDict):
     task_type: str
     train_split: str
     eval_split: Optional[str]
+    test_split_ratio: Optional[float]
     epochs: int
     batch_size: int
     learning_rate: float

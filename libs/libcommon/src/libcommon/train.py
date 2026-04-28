@@ -16,6 +16,7 @@ class TrainingParameters(TypedDict):
     training_algorithm: Optional[str]
     train_split: str
     eval_split: Optional[str]
+    test_split_ratio: Optional[float]
     max_samples: Optional[int]
     experiment_name: Optional[str]
     local_dataset_id: Optional[str]
@@ -43,6 +44,9 @@ DEFAULT_MODEL_NAME = "tiny-bert"
 DEFAULT_EPOCHS = 3
 DEFAULT_BATCH_SIZE = 32
 DEFAULT_LEARNING_RATE = 1e-3
+DEFAULT_TEST_SPLIT_RATIO = 0.3
+MIN_TEST_SPLIT_RATIO = 0.05
+MAX_TEST_SPLIT_RATIO = 0.5
 
 SUPPORTED_TASK_TYPES: frozenset[str] = frozenset(
     {
@@ -103,6 +107,8 @@ _TRAIN_PARAM_ALIASES = {
     "train_split": "train_split",
     "evalSplit": "eval_split",
     "eval_split": "eval_split",
+    "testSplitRatio": "test_split_ratio",
+    "test_split_ratio": "test_split_ratio",
     "maxSamples": "max_samples",
     "max_samples": "max_samples",
     "experimentName": "experiment_name",
@@ -369,6 +375,28 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
             raise TrainValidationError("'evalSplit' must be a non-empty string")
         eval_split = _validate_split_name(eval_split_value, "evalSplit")
 
+    test_split_ratio_value = normalized.get("test_split_ratio")
+    test_split_ratio: Optional[float]
+    if eval_split is None:
+        if test_split_ratio_value is None:
+            test_split_ratio = DEFAULT_TEST_SPLIT_RATIO
+        else:
+            test_split_ratio = _to_bounded_float(
+                test_split_ratio_value,
+                "testSplitRatio",
+                min_value=MIN_TEST_SPLIT_RATIO,
+                max_value=MAX_TEST_SPLIT_RATIO,
+            )
+    else:
+        if test_split_ratio_value is not None:
+            _to_bounded_float(
+                test_split_ratio_value,
+                "testSplitRatio",
+                min_value=MIN_TEST_SPLIT_RATIO,
+                max_value=MAX_TEST_SPLIT_RATIO,
+            )
+        test_split_ratio = None
+
     max_samples_value = normalized.get("max_samples")
     max_samples: Optional[int]
     if max_samples_value is None:
@@ -440,6 +468,7 @@ def normalize_training_params(params: Mapping[str, Any], strict: bool = True) ->
         "training_algorithm": training_algorithm,
         "train_split": train_split,
         "eval_split": eval_split,
+        "test_split_ratio": test_split_ratio,
         "max_samples": max_samples,
         "experiment_name": experiment_name,
         "local_dataset_id": local_dataset_id,

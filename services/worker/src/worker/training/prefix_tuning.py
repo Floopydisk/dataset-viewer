@@ -10,7 +10,13 @@ from peft import PrefixTuningConfig, get_peft_model
 from transformers import AutoTokenizer, PreTrainedModel
 
 from worker.training._base import get_device, resolve_output_dir, resolve_task, set_seed
-from worker.training._data import build_data_collator, ensure_padding_token, load_splits, tokenize_split
+from worker.training._data import (
+    build_data_collator,
+    ensure_padding_token,
+    load_splits,
+    resolve_eval_split_name,
+    tokenize_split,
+)
 from worker.training._trainer import build_trainer, train_with_resume
 from worker.training.algorithms import (
     TrainingAlgorithmResult,
@@ -51,12 +57,15 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
     task_type = context["task_type"]
     output_dir = resolve_output_dir("prefix-tuning", context["experiment_name"], run_id=context["job_id"])
 
+    eval_split_name = resolve_eval_split_name(context["eval_split"], context.get("test_split_ratio"))
     splits = load_splits(
         dataset=context["dataset"],
         revision=context["revision"],
         train_split=context["train_split"],
         eval_split=context["eval_split"],
+        test_split_ratio=context.get("test_split_ratio"),
         max_samples=context["max_samples"],
+        seed=context.get("seed"),
         local_dataset_path=context["local_dataset_path"],
         local_dataset_format=context["local_dataset_format"],
     )
@@ -67,7 +76,7 @@ def run(context: TrainingExecutionContext) -> TrainingAlgorithmResult:
     data_collator = build_data_collator(tokenizer, task_type)
 
     train_ds = tokenize_split(splits[context["train_split"]], tokenizer, task_type)
-    eval_ds = tokenize_split(splits[context["eval_split"]], tokenizer, task_type) if context["eval_split"] else None
+    eval_ds = tokenize_split(splits[eval_split_name], tokenizer, task_type) if eval_split_name else None
 
     cancellation_callback = build_cancellation_callback(context)
     progress_callback = build_progress_callback(context)
