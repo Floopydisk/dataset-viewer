@@ -4,6 +4,13 @@
 import pytest
 
 from libcommon.train import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_EPOCHS,
+    DEFAULT_LEARNING_RATE,
+    DEFAULT_MODEL_NAME,
+    DEFAULT_TEST_SPLIT_RATIO,
+    MAX_TEST_SPLIT_RATIO,
+    MIN_TEST_SPLIT_RATIO,
     SUPPORTED_TASK_TYPES,
     SUPPORTED_TRAINING_ALGORITHMS,
     TrainValidationError,
@@ -42,11 +49,17 @@ def test_normalize_training_params_accepts_aliases() -> None:
         "training_algorithm": "lora",
         "train_split": "train",
         "eval_split": "test",
+        "test_split_ratio": None,
         "max_samples": 2000,
         "experiment_name": "baseline-a",
         "local_dataset_id": None,
         "local_dataset_path": None,
         "local_dataset_format": None,
+        "use_gpu": None,
+        "gpu_count": None,
+        "gpu_type": None,
+        "cpu_cores": None,
+        "memory_gb": None,
     }
 
 
@@ -71,11 +84,17 @@ def test_parse_training_request_uses_defaults() -> None:
         "training_algorithm": None,
         "train_split": "train",
         "eval_split": None,
+        "test_split_ratio": DEFAULT_TEST_SPLIT_RATIO,
         "max_samples": None,
         "experiment_name": None,
         "local_dataset_id": None,
         "local_dataset_path": None,
         "local_dataset_format": None,
+        "use_gpu": None,
+        "gpu_count": None,
+        "gpu_type": None,
+        "cpu_cores": None,
+        "memory_gb": None,
     }
 
 
@@ -99,6 +118,25 @@ def test_get_training_capabilities_returns_supported_values() -> None:
 
     assert capabilities["task_types"] == sorted(SUPPORTED_TASK_TYPES)
     assert capabilities["training_algorithms"] == sorted(SUPPORTED_TRAINING_ALGORITHMS)
+    assert capabilities["default_model"] == DEFAULT_MODEL_NAME
+    assert DEFAULT_MODEL_NAME in capabilities["models"]
+    assert capabilities["defaults"] == {
+        "model_name": DEFAULT_MODEL_NAME,
+        "epochs": DEFAULT_EPOCHS,
+        "batch_size": DEFAULT_BATCH_SIZE,
+        "learning_rate": DEFAULT_LEARNING_RATE,
+        "task_type": "text-classification",
+        "train_split": "train",
+        "eval_split": None,
+        "test_split_ratio": DEFAULT_TEST_SPLIT_RATIO,
+        "max_samples": None,
+        "seed": None,
+    }
+    assert capabilities["ranges"]["test_split_ratio"] == {
+        "min": MIN_TEST_SPLIT_RATIO,
+        "max": MAX_TEST_SPLIT_RATIO,
+    }
+    assert "text-classification" in capabilities["recommended_models"]
 
 
 def test_normalize_training_params_rejects_incompatible_algorithm_task_combo() -> None:

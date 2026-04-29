@@ -351,6 +351,11 @@ def test_train_capabilities_returns_supported_values(client: TestClient) -> None
     assert "training_algorithms" in payload
     assert "text-classification" in payload["task_types"]
     assert "full-finetune" in payload["training_algorithms"]
+    assert payload["default_model"] == "tiny-bert"
+    assert "models" in payload
+    assert "bert-base-uncased" in payload["models"]
+    assert payload["defaults"]["epochs"] == 3
+    assert payload["ranges"]["learning_rate"] == {"min": 1e-07, "max": 10.0}
 
 
 def test_train_post_rejects_unsupported_task_type(client: TestClient) -> None:

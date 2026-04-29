@@ -47,6 +47,20 @@ DEFAULT_LEARNING_RATE = 1e-3
 DEFAULT_TEST_SPLIT_RATIO = 0.3
 MIN_TEST_SPLIT_RATIO = 0.05
 MAX_TEST_SPLIT_RATIO = 0.5
+DEFAULT_MAX_SAMPLES = None
+DEFAULT_SEED = None
+
+RECOMMENDED_MODELS_BY_TASK: dict[str, list[str]] = {
+    "text-classification": ["bert-base-uncased", "distilbert-base-uncased"],
+    "token-classification": ["bert-base-cased", "distilbert-base-cased"],
+    "seq2seq": ["google-t5/t5-small", "facebook/bart-base"],
+    "summarization": ["google-t5/t5-small", "facebook/bart-base"],
+    "causal-lm": ["gpt2", "distilgpt2"],
+    "question-answering": [
+        "distilbert-base-cased-distilled-squad",
+        "bert-large-uncased-whole-word-masking-finetuned-squad",
+    ],
+}
 
 SUPPORTED_TASK_TYPES: frozenset[str] = frozenset(
     {
@@ -285,10 +299,42 @@ def _to_bounded_float(value: Any, field_name: str, min_value: float, max_value: 
     return parsed
 
 
-def get_training_capabilities() -> dict[str, list[str]]:
+def get_training_capabilities() -> dict[str, Any]:
     return {
         "task_types": sorted(SUPPORTED_TASK_TYPES),
         "training_algorithms": sorted(SUPPORTED_TRAINING_ALGORITHMS),
+        "experiment_types": sorted(SUPPORTED_EXPERIMENT_TYPES),
+        "dataset_sources": sorted(SUPPORTED_TRAINING_DATASET_SOURCES),
+        "local_dataset_formats": sorted(SUPPORTED_LOCAL_DATASET_FORMATS),
+        "models": sorted(
+            {DEFAULT_MODEL_NAME}
+            | {model for models in RECOMMENDED_MODELS_BY_TASK.values() for model in models}
+        ),
+        "default_model": DEFAULT_MODEL_NAME,
+        "recommended_models": RECOMMENDED_MODELS_BY_TASK,
+        "defaults": {
+            "model_name": DEFAULT_MODEL_NAME,
+            "epochs": DEFAULT_EPOCHS,
+            "batch_size": DEFAULT_BATCH_SIZE,
+            "learning_rate": DEFAULT_LEARNING_RATE,
+            "task_type": "text-classification",
+            "train_split": "train",
+            "eval_split": None,
+            "test_split_ratio": DEFAULT_TEST_SPLIT_RATIO,
+            "max_samples": DEFAULT_MAX_SAMPLES,
+            "seed": DEFAULT_SEED,
+        },
+        "ranges": {
+            "epochs": {"min": 1, "max": 100},
+            "batch_size": {"min": 1, "max": 2048},
+            "learning_rate": {"min": 1e-7, "max": 10.0},
+            "test_split_ratio": {"min": MIN_TEST_SPLIT_RATIO, "max": MAX_TEST_SPLIT_RATIO},
+            "max_samples": {"min": 1, "max": 100_000_000},
+            "seed": {"min": 0, "max": 2_147_483_647},
+            "gpu_count": {"min": 1, "max": 64},
+            "cpu_cores": {"min": 1, "max": 256},
+            "memory_gb": {"min": 1, "max": 4096},
+        },
     }
 
 
