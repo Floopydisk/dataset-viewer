@@ -44,7 +44,7 @@ x-service-env: &service-env
 
 services:
   reverse-proxy:
-    image: nginx:1.25.3
+    image: nginx:1.27
     container_name: reverse-proxy
     restart: always
     ports:
@@ -317,7 +317,7 @@ services:
       retries: 3
 
   mongodb:
-    image: mongo:6.0.9
+    image: mongo:7.0
     container_name: mongodb
     restart: always
     command: mongod --port 27017 --replSet rs0 --bind_ip_all
